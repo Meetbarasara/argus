@@ -1,0 +1,247 @@
+# Argus — platform (the doctor) + demo world (the patient). See plan/02-architecture.md.
+name: argus
+
+volumes:
+  worldstate:
+  pgdata_platform:
+  pgdata_shop:
+
+services:
+  # ----------------------------------------------------------- platform
+  postgres:
+    image: pgvector/pgvector:pg16
+    profiles: [platform]
+    environment:
+      POSTGRES_USER: argus
+      POSTGRES_PASSWORD: argus
+      POSTGRES_DB: argus
+    ports: ["5433:5432"]
+    volumes: [pgdata_platform:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U argus -d argus"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    profiles: [platform]
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: {context: ., dockerfile: docker/platform.Dockerfile}
+    profiles: [platform]
+    command: sh -c "alembic upgrade head && uvicorn argus.api.app:create_app --factory --host 0.0.0.0 --port 8080"
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://argus:argus@postgres:5432/argus
+      REDIS_URL: redis://redis:6379/0
+      ACTUATOR_URL: http://actuator:8000
+      WORLDSTATE_PATH: /worldstate
+    ports: ["8080:8080"]
+    volumes: [worldstate:/worldstate:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/api/health', timeout=3).raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  worker:
+    build: {context: ., dockerfile: docker/platform.Dockerfile}
+    profiles: [platform]
+    command: celery -A argus.worker.app worker --loglevel=INFO --concurrency=2
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://argus:argus@postgres:5432/argus
+      REDIS_URL: redis://redis:6379/0
+      ACTUATOR_URL: http://actuator:8000
+      WORLDSTATE_PATH: /worldstate
+    volumes: [worldstate:/worldstate:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A argus.worker.app inspect ping -t 5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  ui:
+    build: {context: ., dockerfile: docker/ui.Dockerfile}
+    profiles: [platform]
+    ports: ["8081:80"]
+    depends_on: [api]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  # ----------------------------------------------------------- demo world
+  shopdb:
+    image: postgres:16-alpine
+    profiles: [world]
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+      POSTGRES_DB: shop
+    ports: ["5434:5432"]
+    volumes: [pgdata_shop:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  shopredis:
+    image: redis:7-alpine
+    profiles: [world]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  shopapi:
+    build: {context: ., dockerfile: docker/demoworld.Dockerfile}
+    profiles: [world]
+    command: uvicorn demoworld.shopapi.app:app --host 0.0.0.0 --port 8000
+    environment:
+      SERVICE_NAME: shopapi
+      WORLDSTATE_PATH: /worldstate
+      SHOPDB_URL: postgresql://shop:shop@shopdb:5432/shop
+      SHOPREDIS_URL: redis://shopredis:6379/0
+    ports: ["8001:8000"]
+    volumes: [worldstate:/worldstate]
+    depends_on:
+      shopdb: {condition: service_healthy}
+      shopredis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=3).raise_for_status()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  paymentsvc:
+    build: {context: ., dockerfile: docker/demoworld.Dockerfile}
+    profiles: [world]
+    command: uvicorn demoworld.paymentsvc.app:app --host 0.0.0.0 --port 8000
+    environment:
+      SERVICE_NAME: paymentsvc
+      WORLDSTATE_PATH: /worldstate
+    ports: ["8002:8000"]
+    volumes: [worldstate:/worldstate]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=3).raise_for_status()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  loadgen:
+    build: {context: ., dockerfile: docker/demoworld.Dockerfile}
+    profiles: [world]
+    command: python -m demoworld.loadgen
+    environment:
+      WORLDSTATE_PATH: /worldstate
+      SHOPAPI_URL: http://shopapi:8000
+    volumes: [worldstate:/worldstate:ro]
+    depends_on:
+      shopapi: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time,sys; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat')<30 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  poller:
+    build: {context: ., dockerfile: docker/demoworld.Dockerfile}
+    profiles: [world]
+    command: python -m demoworld.poller
+    environment:
+      WORLDSTATE_PATH: /worldstate
+      TARGETS: shopapi=http://shopapi:8000,paymentsvc=http://paymentsvc:8000
+    volumes: [worldstate:/worldstate]
+    depends_on:
+      shopapi: {condition: service_healthy}
+      paymentsvc: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time,sys; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat')<30 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  alertwatch:
+    build: {context: ., dockerfile: docker/demoworld.Dockerfile}
+    profiles: [world]
+    command: python -m demoworld.alertwatch
+    environment:
+      WORLDSTATE_PATH: /worldstate
+      ALERT_WEBHOOK_URL: http://api:8080/api/alerts/webhook
+    volumes: [worldstate:/worldstate]
+    depends_on:
+      poller: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time,sys; sys.exit(0 if time.time()-os.path.getmtime('/tmp/heartbeat')<30 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  actuator:
+    build: {context: ., dockerfile: docker/demoworld.Dockerfile}
+    profiles: [world]
+    command: uvicorn demoworld.actuator.app:app --host 0.0.0.0 --port 8000
+    environment:
+      WORLDSTATE_PATH: /worldstate
+      ACTUATOR_TOKEN: ${ACTUATOR_TOKEN:-dev-actuator-token}
+      COMPOSE_PROJECT: argus
+    ports: ["8010:8000"]
+    volumes:
+      - worldstate:/worldstate
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=3).raise_for_status()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  # ----------------------------------------------------------- optional / tooling
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    profiles: [observability]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686"]
+
+  tester:
+    build: {context: ., dockerfile: docker/platform.Dockerfile, target: dev}
+    profiles: [test]
+    command: pytest -q -m "integration or world"
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://argus:argus@postgres:5432/argus
+      REDIS_URL: redis://redis:6379/0
+      PLATFORM_API_URL: http://api:8080
+      ACTUATOR_URL: http://actuator:8000
+      WORLDSTATE_PATH: /worldstate
+    volumes:
+      - worldstate:/worldstate:ro
+      - ./tests:/app/tests
+      - ./src:/app/src
+      - ./config:/app/config

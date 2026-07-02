@@ -1,0 +1,7 @@
+# List prices (USD per 1M tokens) for cost visibility on free tiers.
+# Unknown model => cost 0 with a WARN log. Verify/update at M03.
+gemini:
+  gemini-2.5-flash: {in_per_mtok: 0.30, out_per_mtok: 2.50}
+groq:
+  llama-3.3-70b-versatile: {in_per_mtok: 0.59, out_per_mtok: 0.79}
+  llama-3.1-8b-instant:    {in_per_mtok: 0.05, out_per_mtok: 0.08}

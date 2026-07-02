@@ -1,0 +1,8 @@
+# alertwatch rules (03 §3) evaluated over worldstate metrics.
+rules:
+  - {name: high_error_rate,  metric: err_rate_60s,       op: ">",  threshold: 0.20, for_checks: 2, severity: critical}
+  - {name: high_latency_p95, metric: latency_p95_ms_60s, op: ">",  threshold: 1500, for_checks: 2, severity: warning}
+  - {name: dependency_down,  metric: dep_up,             op: "==", threshold: 0,    for_checks: 2, severity: critical}
+
+evaluation_interval_seconds: 10
+refire_cooldown_seconds: 600   # per (rule, service)

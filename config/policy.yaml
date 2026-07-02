@@ -1,0 +1,20 @@
+# Deterministic risk gate policy (03 §3, ADR-04). The LLM never authorizes itself.
+target_classes:
+  shopredis: cache
+  shopdb: database
+  shopapi: service
+  paymentsvc: service
+
+actions:
+  restart_service: {cache: NOTIFY, service: APPROVE_ACTION, database: APPROVE_PLAN}
+  rollback_deploy: {default: APPROVE_ACTION}
+
+confidence_overrides:      # applied after action level; the stricter wins
+  - {below: 0.60, at_least: APPROVE_ACTION}
+  - {below: 0.35, level: TAKE_OVER}
+
+limits:
+  max_remediation_attempts: 2
+  max_review_loops: 2
+  max_llm_calls_per_incident: 40
+  max_wall_seconds_per_incident: 420

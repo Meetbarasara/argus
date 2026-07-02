@@ -1,0 +1,13 @@
+# Role -> model routing (03 §3). Model ids are defaults; M03 verifies live ids.
+providers:
+  gemini: {env_key: GOOGLE_API_KEY, rpm: 9}    # keep 1 below the published free limit
+  groq:   {env_key: GROQ_API_KEY,   rpm: 25}
+
+roles:   # every role used by the platform must appear here
+  supervisor:      {provider: gemini, model: gemini-2.5-flash}
+  reviewer:        {provider: gemini, model: gemini-2.5-flash}
+  log_analyst:     {provider: groq,   model: llama-3.3-70b-versatile}
+  metrics_analyst: {provider: groq,   model: llama-3.3-70b-versatile}
+  change_analyst:  {provider: groq,   model: llama-3.3-70b-versatile}
+  memory_writer:   {provider: groq,   model: llama-3.3-70b-versatile}
+  judge:           {provider: gemini, model: gemini-2.5-flash}
