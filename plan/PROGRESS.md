@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | in_progress | ✅ 2026-07-03 (empty repo) | partial — poe verify ✅; docker items pending | see log | Docker Desktop not installed; 4 docker gate cmds pending user install |
-| M01 | Demo world | todo | – | – | – | |
+| M01 | Demo world | in_progress | ✅ 2026-07-03 (poe verify green) | partial — common/ trio unit-tested ✅; services + world gate need Docker | see log | Blocked on Docker Desktop for services + world/integration gate |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -47,6 +47,18 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - **Pending (Docker Desktop not installed on host):** `docker compose config --quiet`,
   `up -d postgres redis` health, `docker compose build api shopapi`. Run these first
   thing after Docker Desktop is installed, before starting M01.
+
+### M01 — 2026-07-03 (partial: common/ trio only; services Docker-blocked)
+- Built the M01 step-1 foundation: `demoworld/common/` — `jsonlog.py` (03 §2 records +
+  rotation + torn-line-safe `read_jsonl`), `hotconfig.py` (ADR-02 hot reload, keeps
+  last-known on missing/malformed), `stats.py` (rolling-60s window, nearest-rank p95,
+  injectable clock), `settings.py` (worldstate/env accessors).
+- Ran: `uv run poe verify` → ruff ✅, `mypy src` ✅ (8 files), `pytest -m unit` ✅
+  (**17 passed**: 2 settings + 7 jsonlog + 4 hotconfig + 4 stats). All host-side, no Docker.
+- **Pending (Docker Desktop still not installed):** all demo-world services
+  (shopapi, paymentsvc, actuator, loadgen, poller, alertwatch), `inject.py`, and the
+  entire M01 verification gate (`--profile world up`, `pytest -m world`, scenario
+  evidence+recovery). Resume here once Docker is installed.
 
 ## Deviations log
 
