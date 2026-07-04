@@ -7,7 +7,7 @@
 
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
-| M00 | Scaffold & tooling | in_progress | ✅ 2026-07-03 (empty repo) | partial — poe verify ✅; docker items pending | see log | Docker Desktop not installed; 4 docker gate cmds pending user install |
+| M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
 | M01 | Demo world | in_progress | ✅ 2026-07-03 (poe verify green) | partial — common/ trio unit-tested ✅; services + world gate need Docker | see log | Blocked on Docker Desktop for services + world/integration gate |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
@@ -44,9 +44,13 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   (all runtime + dev deps), settings.py + unit tests, all 4 config/ yamls,
   .env.example + .env, docker-compose.yml (all services, profiles, healthchecks,
   `name: argus`), 3 Dockerfiles (platform has `dev` target for tester), .dockerignore.
-- **Pending (Docker Desktop not installed on host):** `docker compose config --quiet`,
-  `up -d postgres redis` health, `docker compose build api shopapi`. Run these first
-  thing after Docker Desktop is installed, before starting M01.
+- **2026-07-05 — Docker gate completed** (Docker Desktop + WSL2 installed on host):
+  - `docker compose config --quiet` → CONFIG_OK
+  - `docker compose --profile platform up -d postgres redis` → `argus-postgres-1`,
+    `argus-redis-1` both **healthy** (project name pinned to `argus`)
+  - `docker compose build api shopapi` → `argus-api:latest` + `argus-shopapi:latest`
+    built, exit 0 (uv sync --frozen works in-container; Dockerfiles + lock validated)
+  - **M00 now fully done.**
 
 ### M01 — 2026-07-03 (partial: common/ trio only; services Docker-blocked)
 - Built the M01 step-1 foundation: `demoworld/common/` — `jsonlog.py` (03 §2 records +
@@ -78,8 +82,10 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   langchain-core 1.4.8, langchain-google-genai 4.2.6, langchain-groq 1.1.3, celery 5.6.3,
   fastapi 0.139.0, pydantic 2.13.4, sqlalchemy 2.0.51, fastembed 0.8.0, pytest 9.1.1, ruff 0.15.20.
 - LLM model ids actually used (free tier, verified live): _tbd at M03_
-- Windows/Docker-Desktop: **Docker Desktop not installed yet** (user action needed);
-  uv installed to `%USERPROFILE%\.local\bin` (new shells may need it on PATH).
+- Windows/Docker-Desktop: **installed & working 2026-07-05** — WSL 2.7.10 (Ubuntu distro,
+  WSL v2 default), Docker Desktop engine server **29.6.1**, no reboot needed. Docker CLI at
+  `C:\Program Files\Docker\Docker\resources\bin` (add to Bash PATH in commands).
+  uv installed to `%USERPROFILE%\.local\bin`.
 
 ## Open questions for the user
 
