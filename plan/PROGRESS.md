@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
-| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/✅ paymentsvc✅ shopapi✅ poller✅ loadgen✅ actuator✅ (docker-socket restart works!); alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
+| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/✅ paymentsvc✅ shopapi✅ poller✅ loadgen✅ actuator✅ alertwatch✅ (alert pipeline live); inject + world gate remain | see log | Docker unblocked; building services incrementally |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -116,6 +116,21 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   captures restart+chaos; rollback d-0002 restores payment_url; tail whitelisted; reset
   clears to baseline (deploys=[]).
 - Next: alertwatch (rule engine → alerts), inject.py, and the 5-scenario world gate.
+
+### M01 — 2026-07-05 (alertwatch: alert pipeline live)
+- `alertwatch`: loads alert_rules.yaml, evaluates every 10s, fires after `for_checks`
+  consecutive breaches with per-(rule,service,dep) cooldown; appends alerts/sent.jsonl +
+  best-effort webhook. Pure engine (evaluate_rule/latest_values/check_rules/tick) — 6 unit
+  tests. Host: poe verify green (37 tests).
+- **Debug win (found by live test, not guessed):** during S1, shopapi `/internal/stats`
+  took ~4s (redis-py connection retries + DNS lookup of the stopped host), exceeding the
+  poller's 3s timeout → no metrics during the outage → no alert. Fix: redis client
+  `retry=Retry(NoBackoff(),0)` + 0.3s timeouts (fast-fail), and poller GET timeout 3→5s.
+- **Live S1 end-to-end now fires**: err_rate 0.74, dep_up[redis]=0 → sent.jsonl gets
+  dependency_down (critical), high_error_rate, high_latency_p95; recovers on redis restart.
+- Note: ~3s residual is DNS resolution of the stopped container name (pre-connect, not
+  bounded by socket timeouts); poller's 5s timeout covers it. Acceptable — valid evidence.
+- Next: inject.py (fault CLI) + the 5-scenario world gate → finishes M01.
 
 ## Deviations log
 

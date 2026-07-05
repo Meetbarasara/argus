@@ -29,6 +29,8 @@ import redis
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from psycopg_pool import ConnectionPool
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 from demoworld.common import settings
 from demoworld.common.hotconfig import HotConfig
@@ -76,10 +78,15 @@ def create_app(*, start_polling: bool = True, seed_schema: bool = True) -> FastA
     log = JsonLogger(settings.logs_dir(), SERVICE)
 
     dsn = settings.shopdb_url()
+    # No retries + short timeouts so a redis outage (S1) fails fast (~0.3s) instead of
+    # stalling ~4s on connection retries — otherwise the poller's timeout skips the
+    # snapshot and the outage never shows up in metrics.
     rds = redis.Redis.from_url(
         settings.shopredis_url(),
-        socket_connect_timeout=0.5,
-        socket_timeout=0.5,
+        socket_connect_timeout=0.3,
+        socket_timeout=0.3,
+        retry_on_timeout=False,
+        retry=Retry(NoBackoff(), 0),
         decode_responses=True,
     )
     if seed_schema:

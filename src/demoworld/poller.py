@@ -73,7 +73,7 @@ def poll_once(targets: dict[str, str], metrics_file: Path, client: httpx.Client)
     written = 0
     for service, base in targets.items():
         try:
-            resp = client.get(f"{base}/internal/stats", timeout=3.0)
+            resp = client.get(f"{base}/internal/stats", timeout=5.0)
             resp.raise_for_status()
             snap = resp.json()
         except Exception:
