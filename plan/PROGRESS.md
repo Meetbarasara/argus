@@ -9,7 +9,7 @@
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
 | M01 | Demo world | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (45) + world gate 5/5 passed (554s) | 141696a + gate | Complete — all 5 scenarios produce evidence + recover |
-| M02 | Platform core | todo | – | – | – | |
+| M02 | Platform core | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (54) + integration 4/4 + gate curl | 588e878+ | Alert→incident→worker pipe live; full schema migrated |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
 | M05 | Graph v1 | todo | – | – | – | |
@@ -145,6 +145,22 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
 
+### M02 — 2026-07-05 (platform core — DONE)
+- Full 03 §1 schema in `db/models.py` (8 tables + pgvector Vector + HNSW index + partial-unique
+  dedupe index); Alembic migration 0001 (extension + create_all). `db/session.py` engine/session.
+- `repo/incidents.py`: state machine (STATE_TRANSITIONS) enforced by `transition()` (illegal →
+  PolicyError); create/find_open_for_service/append_alert_event/list. `errors.py` hierarchy.
+- `worker/` Celery app (acks_late, prefetch 1) + v0 tasks (INVESTIGATING→FAILED "graph not
+  implemented (M05)"); `resume_incident` stub. API imports only the celery app to send_task by name.
+- `api/` factory + routers: health (db/redis/worldstate + config echo), alerts webhook (dedupe +
+  race guard, enqueue after commit), incidents (list/detail/spans/llm_calls), 501 stubs for the
+  rest of 03 §4. api container runs `alembic upgrade head` before uvicorn.
+- Host: `poe verify` green — **54 unit tests** (+state machine 6, alert payload 3); mypy 41 files.
+- Integration (tester): **4/4** — health ready; webhook→incident→worker FAILED (full pipe);
+  dedupe partial-unique-index (IntegrityError on 2nd open incident/service); alembic up→down→up
+  roundtrip on a temp DB. Gate curl: fixture webhook → 201 → FAILED; approvals stub → 501.
+- **M02 complete.** Next: M03 (LLM layer — router, rate limits, structured retry, record/replay).
+
 ### M01 — 2026-07-05 (WORLD GATE GREEN — M01 DONE)
 - `tests/integration/test_scenarios.py` (marker `world`, runs in tester container): per
   scenario reset→inject(apply_fault)→assert expected alert≤90s + evidence→remediate→assert
@@ -174,6 +190,9 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-05 | shopapi redis client: no retries + 0.3s timeouts; poller GET timeout 3→5s | During S1, /internal/stats stalled ~4s on redis retries+DNS, exceeding poller timeout → outage missing from metrics | S1 now shows up in metrics fast; residual ~3s is DNS of the stopped host, covered by the poller's 5s timeout |
 | 2026-07-05 | Added `psycopg-pool` and `docker` (SDK) deps | shopapi needs a real connection pool (S4); actuator needs the Docker API (restart/stop by label) | Recorded in uv.lock |
 | 2026-07-05 | Actuator gained `/admin/stop_container` (not in 03 §5) | S1 injection needs to stop a container; keeps inject pure-HTTP (no Docker access in inject/tester). Agents never get it — only /restart | Minor API addition, admin-scoped |
+| 2026-07-05 | incidents gained `service` + `status_reason` columns (not explicit in 03 §1) | `service` is required for the service-level dedupe partial-unique index + UI display; `status_reason` persists IncidentState.status_reason (why FAILED/TAKEN_OVER) | Additive columns; no shape divergence |
+| 2026-07-05 | `alert_events` is a JSONB array column (03 said `jsonb[]`); migration 0001 uses `metadata.create_all` | Simpler + equivalent for append semantics; single-migration demo doesn't need per-table op.create_table | None functional |
+| 2026-07-05 | ruff: allow FastAPI Depends/Query/Body in arg defaults (flake8-bugbear extend-immutable-calls) | Idiomatic FastAPI DI pattern that bugbear (B008) flags | Lint config only |
 
 ## Environment facts (fill during build)
 

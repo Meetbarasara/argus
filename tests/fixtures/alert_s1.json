@@ -1,0 +1,11 @@
+{
+  "alert_id": "a-test01",
+  "rule": "dependency_down",
+  "service": "shopapi",
+  "severity": "critical",
+  "ts": "2026-07-05T10:00:00.000Z",
+  "window_seconds": 60,
+  "observed": {"metric": "dep_up", "value": 0, "threshold": 0},
+  "labels": {"dep": "redis"},
+  "summary": "shopapi dep_up[redis]=0 breached == 0"
+}
