@@ -35,6 +35,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/argus", "src/demoworld"]
 
+[tool.uv]
+# Repo is on E: while uv's cache is on C:; cross-drive hardlinks fail, so copy instead.
+link-mode = "copy"
+
 # ---------------------------------------------------------------- tasks (05)
 
 [tool.poe.tasks]

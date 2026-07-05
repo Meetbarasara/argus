@@ -86,6 +86,11 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   WSL v2 default), Docker Desktop engine server **29.6.1**, no reboot needed. Docker CLI at
   `C:\Program Files\Docker\Docker\resources\bin` (add to Bash PATH in commands).
   uv installed to `%USERPROFILE%\.local\bin`.
+- **Relocated 2026-07-05**: repo moved to **`E:\Desktop\argus`** (`/e/Desktop/argus` in
+  Bash); Docker Desktop disk image moved to **E:** (Settings → Resources → Advanced).
+  Move was lossless (git in sync, all images survived, poe verify green after venv rebuild).
+  Because the uv cache stays on C: (cross-drive), `link-mode = "copy"` is pinned in
+  pyproject `[tool.uv]`; after any host move, recreate the venv: `rm -rf .venv && uv sync`.
 
 ## Open questions for the user
 
