@@ -11,7 +11,7 @@
 | M01 | Demo world | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (45) + world gate 5/5 passed (554s) | 141696a + gate | Complete — all 5 scenarios produce evidence + recover |
 | M02 | Platform core | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (54) + integration 4/4 + gate curl | 588e878+ | Alert→incident→worker pipe live; full schema migrated |
 | M03 | LLM layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (74) + integration 4/4 + live smoke 7/7 roles | a552414+ | Router/limits/retry/record-replay; real Gemini+Groq verified |
-| M04 | Tool layer | todo | – | – | – | |
+| M04 | Tool layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (84) + tool-world 3/3 + all 9 tools logged | 496747e+ | 9 tools, permission-enforced, evidence verified vs live world |
 | M05 | Graph v1 | todo | – | – | – | |
 | M06 | Human-in-the-loop | todo | – | – | – | |
 | M07 | Memory | todo | – | – | – | |
@@ -144,6 +144,23 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - **Only remaining M01 item: the automated 5-scenario world gate** (tester container:
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
+
+### M04 — 2026-07-05 (tool layer — DONE)
+- `tools/`: worldstate (own defensive JSONL reader — no demoworld import; time-window filter;
+  error-template normalization), schemas (9 Pydantic arg models), telemetry_tools (search_logs,
+  log_error_summary, query_metrics, service_health), change_tools (list_deploys, deploy_diff,
+  recent_actions), remediation_tools (restart_service, rollback_deploy → actuator), registry
+  (ToolSpec + ToolExecutor: validate args, enforce allowed_agents, refuse mutating outside
+  remediate node, truncate ≤50/8KB, tool_calls + tool span, structured errors vs ToolError),
+  langchain_bridge (per-agent StructuredTools for M05). `tests/conftest.py` clears settings cache.
+- Host: `poe verify` green — **84 unit** (worldstate readers + normalize goldens, registry matrix
+  == 04 §5, truncation, per-agent toolset). mypy 63 files.
+- Integration (tester, platform+world up) **3/3**: permission enforcement (specialist can't mutate;
+  remediate tool refused outside remediate node; wrong agent; bad args); S3 evidence across all
+  read tools (search_logs finds checkout 502s, log_error_summary, list_deploys+deploy_diff show the
+  payment_url deploy, query_metrics err_rate, service_health) + rollback recovers; S1 restart via tool.
+- Gate: **all 9 tools logged** to tool_calls with OK + ERROR paths.
+- **M04 complete.** Next: M05 (graph v1 — the agents come alive; S1 resolves autonomously).
 
 ### M03 — 2026-07-05 (LLM layer — DONE)
 - `llm/`: config (role→model + ARGUS_MODEL__<ROLE> overrides), costs (usage + list-price,
