@@ -52,6 +52,17 @@ def read_jsonl(path: str | Path, *, limit: int | None = None) -> list[dict[str, 
     return out
 
 
+def append_jsonl(path: str | Path, record: dict[str, Any]) -> None:
+    """Append one JSON record as a line, creating parent dirs as needed.
+
+    Shared by poller (metrics), alertwatch (sent alerts) and the actuator (deploy/audit).
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
 class JsonLogger:
     """Appends JSON records to ``<logs_dir>/<service>.jsonl`` with size-based rotation."""
 

@@ -22,6 +22,10 @@ def config_path(service: str) -> Path:
     return worldstate_path() / "config" / f"{service}.json"
 
 
+def metrics_file() -> Path:
+    return worldstate_path() / "metrics" / "metrics.jsonl"
+
+
 def shopdb_url() -> str:
     return os.environ.get("SHOPDB_URL", "postgresql://shop:shop@localhost:5434/shop")
 

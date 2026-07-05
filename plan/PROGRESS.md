@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
-| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/ ✅ paymentsvc ✅ shopapi ✅ (happy path + S1 live); poller/loadgen/actuator/alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
+| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/ ✅ paymentsvc ✅ shopapi ✅ poller ✅ loadgen ✅ (telemetry flowing); actuator/alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -90,6 +90,17 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   error line written to worldstate/logs/shopapi.jsonl (correct 03 §2 shape); restart → 200.
   S2/S3/S4/S5 mechanisms wired (config-driven), to be exercised via inject at the world gate.
 - Next: poller + loadgen (metrics flowing), then actuator, alertwatch, inject, world gate.
+
+### M01 — 2026-07-05 (poller + loadgen: telemetry flowing)
+- `jsonlog.append_jsonl` shared helper; `settings.metrics_file()`; `poller` (samples every
+  service's /internal/stats every 5s → 03 §2 metric lines; pure `parse_targets` +
+  `stats_to_metrics` unit-tested) and `loadgen` (concurrent 70/30 products/checkout mix,
+  env-tunable concurrency/think — the S4 load lever).
+- Host: `uv run poe verify` green (25 tests; +3 poller).
+- Live (world up + poller + loadgen): metrics.jsonl accumulating; after ~18s shopapi
+  req_count_60s=176, err_rate 0, latency_p95 154ms, dep_up{redis,payment,db}=1, pool 1/10;
+  paymentsvc req_count 54, latency_p95 40ms. All six 03 §2 metric names present.
+- Next: actuator (restart/deploy/rollback/chaos/tail/reset), alertwatch, inject, world gate.
 
 ## Deviations log
 
