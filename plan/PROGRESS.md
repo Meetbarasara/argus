@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
-| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/ ✅ paymentsvc ✅ shopapi ✅ poller ✅ loadgen ✅ (telemetry flowing); actuator/alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
+| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/✅ paymentsvc✅ shopapi✅ poller✅ loadgen✅ actuator✅ (docker-socket restart works!); alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -101,6 +101,21 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   req_count_60s=176, err_rate 0, latency_p95 154ms, dep_up{redis,payment,db}=1, pool 1/10;
   paymentsvc req_count 54, latency_p95 40ms. All six 03 §2 metric names present.
 - Next: actuator (restart/deploy/rollback/chaos/tail/reset), alertwatch, inject, world gate.
+
+### M01 — 2026-07-05 (actuator: the privileged choke point)
+- Added `docker` SDK dep. `actuator/deploys.py` (DeployManager: deploy/rollback/list with
+  dotted-path changes, before/after snapshots, monotonic d-NNNN ids, atomic config writes)
+  — 6 host unit tests. `actuator/docker_ops.py` (restart by compose label, 08 #4).
+  `actuator/app.py` (factory, token-guarded: /restart /deploy /rollback /deploys /actions
+  /chaos /tail /admin/reset_worldstate; /health open).
+- Host: `uv run poe verify` green (31 tests; +6 deploys). mypy needed a type:ignore for
+  docker.from_env (not in stubs).
+- **Live smoke — all endpoints pass**, incl. the 08 #4 risk: **restart shopredis via the
+  Docker socket works** (`restarted: [argus-shopredis-1]`, by-label). 401 without token;
+  deploy d-0001 records old→new + snapshots; chaos proxied to paymentsvc; audit log
+  captures restart+chaos; rollback d-0002 restores payment_url; tail whitelisted; reset
+  clears to baseline (deploys=[]).
+- Next: alertwatch (rule engine → alerts), inject.py, and the 5-scenario world gate.
 
 ## Deviations log
 

@@ -205,7 +205,7 @@ services:
   actuator:
     build: {context: ., dockerfile: docker/demoworld.Dockerfile}
     profiles: [world]
-    command: uvicorn demoworld.actuator.app:app --host 0.0.0.0 --port 8000
+    command: uvicorn demoworld.actuator.app:create_app --factory --host 0.0.0.0 --port 8000
     environment:
       WORLDSTATE_PATH: /worldstate
       ACTUATOR_TOKEN: ${ACTUATOR_TOKEN:-dev-actuator-token}
