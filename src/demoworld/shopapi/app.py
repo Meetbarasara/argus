@@ -43,8 +43,8 @@ SERVICE = "shopapi"
 # Per-request DB hold on /products (the "live inventory check"). This is the lever that
 # lets S4 exhaust a size-2 pool under load while a size-10 pool copes; tuned with loadgen
 # concurrency when the world gate runs. It is a fixed cost, never fault-injected.
-DB_WORK_SECONDS = 0.15
-POOL_ACQUIRE_TIMEOUT = 0.75
+DB_WORK_SECONDS = 0.4
+POOL_ACQUIRE_TIMEOUT = 0.3
 
 
 def _ensure_schema(dsn: str) -> None:

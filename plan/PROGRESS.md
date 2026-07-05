@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
-| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — all services✅ + inject✅ (S1/S2/S3 live); only the automated 5-scenario world gate remains | see log | Docker unblocked; world gate is the finale |
+| M01 | Demo world | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (45) + world gate 5/5 passed (554s) | 141696a + gate | Complete — all 5 scenarios produce evidence + recover |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -145,6 +145,21 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
 
+### M01 — 2026-07-05 (WORLD GATE GREEN — M01 DONE)
+- `tests/integration/test_scenarios.py` (marker `world`, runs in tester container): per
+  scenario reset→inject(apply_fault)→assert expected alert≤90s + evidence→remediate→assert
+  recovery (2 consecutive healthy checks)≤130s. `_reset` restarts alertwatch (clears
+  cooldown) + shopredis + reseeds baseline.
+- **S4 load tuning (the known-hard part):** closed-loop loadgen self-limits, so a saturated
+  pool queued but didn't time out. Fix: shopapi `DB_WORK_SECONDS 0.15→0.4`,
+  `POOL_ACQUIRE_TIMEOUT 0.75→0.3`, loadgen `LOADGEN_CONCURRENCY=12`. Result: pool=2 crosses
+  err_rate 0.2 at ~25s; pool=10 stays 0.0. Baseline /products latency now ~400ms (< 1500).
+- **Gate result: `5 passed in 554.78s` (9:14).** S1 ConnectionError+dep down→restart;
+  S2 checkout-502 + no-deploy→restart paymentsvc; S3 payment_url deploy→rollback;
+  S4 PoolTimeout + db_pool_size deploy→rollback; S5 recs_v2 deploy + /products 500→rollback.
+  All recovered. Host `poe verify` green (45).
+- **M01 complete.** Next: M02 (platform core — API, DB migrations, Celery, alert intake).
+
 ## Deviations log
 
 > Anything done differently from plan/ docs: version bumps, renamed LLM model ids,
@@ -155,6 +170,10 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-03 | Folder not renamed to `argus`; compose pinned with `name: argus` instead | Windows locks the CWD of the running session — rename impossible mid-session | None for docker; user may rename folder later when no session is open |
 | 2026-07-03 | `readme` field omitted from pyproject | README.md is an M12 deliverable; hatchling build fails on missing file | M12 re-adds the field when it creates README.md |
 | 2026-07-03 | Added `.dockerignore` (not in M00 file list) | Keep build contexts small; exclude .env/plan/.venv from images | None |
+| 2026-07-05 | shopapi DB_WORK_SECONDS=0.4, POOL_ACQUIRE_TIMEOUT=0.3; loadgen LOADGEN_CONCURRENCY=12 | Make S4 pool exhaustion deterministic under closed-loop load (pool=2 times out, pool=10 clean) | Baseline /products latency ~400ms (well under the 1500ms alert threshold); no behavior change to other scenarios |
+| 2026-07-05 | shopapi redis client: no retries + 0.3s timeouts; poller GET timeout 3→5s | During S1, /internal/stats stalled ~4s on redis retries+DNS, exceeding poller timeout → outage missing from metrics | S1 now shows up in metrics fast; residual ~3s is DNS of the stopped host, covered by the poller's 5s timeout |
+| 2026-07-05 | Added `psycopg-pool` and `docker` (SDK) deps | shopapi needs a real connection pool (S4); actuator needs the Docker API (restart/stop by label) | Recorded in uv.lock |
+| 2026-07-05 | Actuator gained `/admin/stop_container` (not in 03 §5) | S1 injection needs to stop a container; keeps inject pure-HTTP (no Docker access in inject/tester). Agents never get it — only /restart | Minor API addition, admin-scoped |
 
 ## Environment facts (fill during build)
 

@@ -157,6 +157,7 @@ services:
     environment:
       WORLDSTATE_PATH: /worldstate
       SHOPAPI_URL: http://shopapi:8000
+      LOADGEN_CONCURRENCY: "12"   # enough concurrent /products that a shrunk pool (S4) exhausts
     volumes: [worldstate:/worldstate:ro]
     depends_on:
       shopapi: {condition: service_healthy}
