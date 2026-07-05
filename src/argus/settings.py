@@ -1,9 +1,12 @@
 """All environment access lives here (05: no os.environ reads elsewhere)."""
 
+import os
 from functools import lru_cache
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_MODEL_OVERRIDE_PREFIX = "ARGUS_MODEL__"
 
 
 class Settings(BaseSettings):
@@ -31,7 +34,25 @@ class Settings(BaseSettings):
     otel_export_jaeger: bool = False
     dev_mode: bool = False
 
+    def api_key_for(self, env_key: str) -> str:
+        return {"GOOGLE_API_KEY": self.google_api_key, "GROQ_API_KEY": self.groq_api_key}.get(
+            env_key, ""
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def model_overrides() -> dict[str, str]:
+    """Per-role model overrides from ``ARGUS_MODEL__<ROLE>=provider:model`` (03 §3).
+
+    Dynamic per-role env keys can't be pydantic fields, so this is the one other place
+    env is read — kept here so all env access still lives in settings.
+    """
+    return {
+        key[len(_MODEL_OVERRIDE_PREFIX) :].lower(): value
+        for key, value in os.environ.items()
+        if key.startswith(_MODEL_OVERRIDE_PREFIX) and value
+    }

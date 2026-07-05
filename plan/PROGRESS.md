@@ -10,7 +10,7 @@
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
 | M01 | Demo world | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (45) + world gate 5/5 passed (554s) | 141696a + gate | Complete — all 5 scenarios produce evidence + recover |
 | M02 | Platform core | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (54) + integration 4/4 + gate curl | 588e878+ | Alert→incident→worker pipe live; full schema migrated |
-| M03 | LLM layer | todo | – | – | – | |
+| M03 | LLM layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (74) + integration 4/4 + live smoke 7/7 roles | a552414+ | Router/limits/retry/record-replay; real Gemini+Groq verified |
 | M04 | Tool layer | todo | – | – | – | |
 | M05 | Graph v1 | todo | – | – | – | |
 | M06 | Human-in-the-loop | todo | – | – | – | |
@@ -145,6 +145,22 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
 
+### M03 — 2026-07-05 (LLM layer — DONE)
+- `llm/`: config (role→model + ARGUS_MODEL__<ROLE> overrides), costs (usage + list-price,
+  len//4 fallback), parsing (fence-strip + validate, PEP695 generics), recorder (sha256
+  cache_key + lookup), ratelimit (Redis sliding-window per provider), providers (only SDK
+  import site), fake (FakeLLM + LLM_MODE=fake loader), logging (llm_calls write), router
+  (structured + with_tools: replay/record cache → ratelimit → validation-retry ≤2 → cost →
+  llm_calls + llm span), smoke CLI. `obs/spans.py` + `pg_exporter.py` (span→Postgres).
+- Host: `poe verify` green — **74 unit** (costs 5, parsing 6, recorder 2, config 2, fake 5);
+  mypy 55 files.
+- Integration (tester) **4/4**: structured+fake writes llm_call+span; validation_retries=1
+  on bad→good; record→replay serves cache + miss raises LLMReplayMissError; ratelimiter
+  blocks the 4th call at rpm=3.
+- **Live smoke 7/7 roles** (real Gemini + Groq): all servable; llm_calls rows with real
+  tokens+cost (gemini 82in/114out $0.00031; groq 114in/13out $0.00008); 10 llm spans.
+- **M03 complete.** Next: M04 (tool layer — registry + 9 tools + tool_calls logging).
+
 ### M02 — 2026-07-05 (platform core — DONE)
 - Full 03 §1 schema in `db/models.py` (8 tables + pgvector Vector + HNSW index + partial-unique
   dedupe index); Alembic migration 0001 (extension + create_all). `db/session.py` engine/session.
@@ -193,6 +209,8 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-05 | incidents gained `service` + `status_reason` columns (not explicit in 03 §1) | `service` is required for the service-level dedupe partial-unique index + UI display; `status_reason` persists IncidentState.status_reason (why FAILED/TAKEN_OVER) | Additive columns; no shape divergence |
 | 2026-07-05 | `alert_events` is a JSONB array column (03 said `jsonb[]`); migration 0001 uses `metadata.create_all` | Simpler + equivalent for append semantics; single-migration demo doesn't need per-table op.create_table | None functional |
 | 2026-07-05 | ruff: allow FastAPI Depends/Query/Body in arg defaults (flake8-bugbear extend-immutable-calls) | Idiomatic FastAPI DI pattern that bugbear (B008) flags | Lint config only |
+| 2026-07-05 | `settings.model_overrides()` reads `ARGUS_MODEL__*` env directly | Dynamic per-role keys can't be pydantic fields; kept in settings so env access stays there (03 §3 spec'd mechanism) | None |
+| 2026-07-05 | PEP 695 generic syntax (`def f[T: BaseModel]`) in parsing/router | ruff UP047 prefers it on py3.12 | None |
 
 ## Environment facts (fill during build)
 
@@ -200,7 +218,10 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - Locked versions of note (from uv.lock): langgraph 1.2.7, langgraph-checkpoint-postgres 3.1.0,
   langchain-core 1.4.8, langchain-google-genai 4.2.6, langchain-groq 1.1.3, celery 5.6.3,
   fastapi 0.139.0, pydantic 2.13.4, sqlalchemy 2.0.51, fastembed 0.8.0, pytest 9.1.1, ruff 0.15.20.
-- LLM model ids actually used (free tier, verified live): _tbd at M03_
+- LLM model ids actually used (free tier, **verified live 2026-07-05**): supervisor/reviewer/judge
+  = `gemini-2.5-flash`; log/metrics/change_analyst + memory_writer = `llama-3.3-70b-versatile` (groq).
+  Per-call cost ≈ $0.00031 (gemini) / $0.00008 (groq); full 7-role smoke ≈ $0.0012. Config ids in
+  config/models.yaml are correct — no drift.
 - Windows/Docker-Desktop: **installed & working 2026-07-05** — WSL 2.7.10 (Ubuntu distro,
   WSL v2 default), Docker Desktop engine server **29.6.1**, no reboot needed. Docker CLI at
   `C:\Program Files\Docker\Docker\resources\bin` (add to Bash PATH in commands).
