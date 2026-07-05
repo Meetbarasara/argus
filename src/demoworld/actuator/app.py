@@ -90,6 +90,18 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=result.get("error", "restart failed"))
         return result
 
+    @app.post("/admin/stop_container", dependencies=[Depends(auth)])
+    def stop_container(body: RestartBody) -> dict[str, Any]:
+        # Fault-injection only (S1). Agents never get this — they only get /restart.
+        result = docker_ops.stop_service(body.service, project=project)
+        append_jsonl(
+            actions_file,
+            {"ts": now_iso(), "action": "stop", "service": body.service, "result": result},
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "stop failed"))
+        return result
+
     @app.post("/deploy", dependencies=[Depends(auth)])
     def deploy(body: DeployBody) -> dict[str, Any]:
         return dm.deploy(body.service, body.changes, body.message, body.author)

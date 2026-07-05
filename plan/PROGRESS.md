@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
-| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/✅ paymentsvc✅ shopapi✅ poller✅ loadgen✅ actuator✅ alertwatch✅ (alert pipeline live); inject + world gate remain | see log | Docker unblocked; building services incrementally |
+| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — all services✅ + inject✅ (S1/S2/S3 live); only the automated 5-scenario world gate remains | see log | Docker unblocked; world gate is the finale |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -131,6 +131,19 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - Note: ~3s residual is DNS resolution of the stopped container name (pre-connect, not
   bounded by socket timeouts); poller's 5s timeout covers it. Acceptable — valid evidence.
 - Next: inject.py (fault CLI) + the 5-scenario world gate → finishes M01.
+
+### M01 — 2026-07-05 (inject.py fault CLI)
+- Actuator gains `/admin/stop_container` (docker_ops.stop_service) so injection is pure
+  HTTP (works from host or tester container; agents never get it — only /restart).
+- `inject.py`: `--scenario S1..S5 [--decoy-deploys N] [--warmup-seconds N]`, drives faults
+  via the actuator; S1 stop redis, S2 chaos, S3 payment_url deploy, S4 db_pool_size deploy,
+  S5 recs_v2 deploy; optional benign decoy deploys precede the fault. 8 host unit tests
+  (httpx MockTransport asserts each scenario's endpoint+payload). poe verify green (45).
+- Live via CLI from host: S3 → deploy d-0001 (payment_url old→new) in /deploys; S2 → chaos
+  3000ms on paymentsvc in /actions; reset clean.
+- **Only remaining M01 item: the automated 5-scenario world gate** (tester container:
+  reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
+  load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
 
 ## Deviations log
 
