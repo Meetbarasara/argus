@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
-| M01 | Demo world | in_progress | ✅ 2026-07-03 (poe verify green) | partial — common/ trio unit-tested ✅; services + world gate need Docker | see log | Blocked on Docker Desktop for services + world/integration gate |
+| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/ ✅ + paymentsvc ✅ (unit+live smoke); shopapi/poller/actuator/alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -63,6 +63,18 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   (shopapi, paymentsvc, actuator, loadgen, poller, alertwatch), `inject.py`, and the
   entire M01 verification gate (`--profile world up`, `pytest -m world`, scenario
   evidence+recovery). Resume here once Docker is installed.
+
+### M01 — 2026-07-05 (paymentsvc service, Docker now available)
+- Built `seed/defaults.py` (baseline configs + 20-product seed + `ensure_config`
+  self-bootstrap) and `paymentsvc` (factory-mode FastAPI: /health, /pay, /internal/stats,
+  /admin/chaos). Compose command switched to `--factory` for testability.
+- Host: `uv run poe verify` green — 22 unit tests (5 new paymentsvc via TestClient).
+- Live smoke (built image + `up -d paymentsvc`): /health ok; /pay baseline 40ms;
+  /internal/stats correct 03 §2 shape (config_version d-0000); **S2 mechanism verified** —
+  chaos 3000ms → /pay took 3.05s (latency_ms 3040) → reset to 0. Fixed a robustness bug
+  found in smoke (/pay 422'd without JSON content-type → dropped the unused body param).
+- Next: `shopapi` (DB pool + cache + checkout→paymentsvc; needs psycopg-pool dep), then
+  poller/loadgen, actuator, alertwatch, inject, and the 5-scenario world gate.
 
 ## Deviations log
 
