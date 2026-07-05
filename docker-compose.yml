@@ -116,7 +116,7 @@ services:
   shopapi:
     build: {context: ., dockerfile: docker/demoworld.Dockerfile}
     profiles: [world]
-    command: uvicorn demoworld.shopapi.app:app --host 0.0.0.0 --port 8000
+    command: uvicorn demoworld.shopapi.app:create_app --factory --host 0.0.0.0 --port 8000
     environment:
       SERVICE_NAME: shopapi
       WORLDSTATE_PATH: /worldstate

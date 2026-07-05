@@ -8,7 +8,7 @@
 | # | Milestone | Status | Verify before | Gate after | Commit | Notes |
 |---|---|---|---|---|---|---|
 | M00 | Scaffold & tooling | done | ✅ 2026-07-03 (empty repo) | ✅ 2026-07-05 poe verify + all 4 docker gates | 827ea31 | Complete — Docker installed, full gate green |
-| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/ ✅ + paymentsvc ✅ (unit+live smoke); shopapi/poller/actuator/alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
+| M01 | Demo world | in_progress | ✅ 2026-07-05 (poe verify green) | partial — common/ ✅ paymentsvc ✅ shopapi ✅ (happy path + S1 live); poller/loadgen/actuator/alertwatch/inject + world gate remain | see log | Docker unblocked; building services incrementally |
 | M02 | Platform core | todo | – | – | – | |
 | M03 | LLM layer | todo | – | – | – | |
 | M04 | Tool layer | todo | – | – | – | |
@@ -75,6 +75,21 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   found in smoke (/pay 422'd without JSON content-type → dropped the unused body param).
 - Next: `shopapi` (DB pool + cache + checkout→paymentsvc; needs psycopg-pool dep), then
   poller/loadgen, actuator, alertwatch, inject, and the 5-scenario world gate.
+
+### M01 — 2026-07-05 (shopapi service)
+- Added psycopg-pool dep; settings `shopdb_url()`/`shopredis_url()`; `shopapi` (factory,
+  sync handlers in threadpool): /health, /products (live inventory DB check + cache-first
+  catalog), /checkout (→paymentsvc with request_timeout_ms), /internal/stats (deps +
+  db_pool + config_version). Startup seeds the products table (20 rows, idempotent retry).
+  Pool sized from `db_pool_size`, rebuilt on config change (S4 lever = DB_WORK_SECONDS 0.15
+  hold + POOL_ACQUIRE_TIMEOUT 0.75; final tuning at world-gate time with loadgen).
+- Host: `uv run poe verify` green (22 tests; mypy caught a redis Awaitable-union → cast fix).
+- Live smoke (world up: shopdb+shopredis+shopapi+paymentsvc): /products returns 20 rows;
+  /checkout 200 via paymentsvc; deps all up; pool size 10.
+- **S1 verified live**: stop shopredis → /products 500 `ConnectionError`, dep redis=down,
+  error line written to worldstate/logs/shopapi.jsonl (correct 03 §2 shape); restart → 200.
+  S2/S3/S4/S5 mechanisms wired (config-driven), to be exercised via inject at the world gate.
+- Next: poller + loadgen (metrics flowing), then actuator, alertwatch, inject, world gate.
 
 ## Deviations log
 

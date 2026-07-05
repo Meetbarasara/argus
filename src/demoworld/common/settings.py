@@ -20,3 +20,11 @@ def logs_dir() -> Path:
 
 def config_path(service: str) -> Path:
     return worldstate_path() / "config" / f"{service}.json"
+
+
+def shopdb_url() -> str:
+    return os.environ.get("SHOPDB_URL", "postgresql://shop:shop@localhost:5434/shop")
+
+
+def shopredis_url() -> str:
+    return os.environ.get("SHOPREDIS_URL", "redis://localhost:6379/0")
