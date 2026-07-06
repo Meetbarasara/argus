@@ -1,19 +1,23 @@
-"""Celery tasks. M05: run_incident drives the compiled LangGraph pipeline with
-``thread_id = incident_id``. Nodes own every status transition (via incident_repo); this
-wrapper only starts the run, catches unhandled errors as FAILED, and reports the final
-status. Resume (M06) will re-enter the same thread after a human decision."""
+"""Celery tasks. M06: run_incident drives the graph until it completes or hits an
+interrupt; on interrupt the task opens the PENDING approvals row and parks the incident at
+WAITING_APPROVAL (side effects live here, not in the node, which re-runs on resume — 08
+#18). resume_incident re-enters the same thread with the human's decision, guarded by an
+idempotency check (08 #19)."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import structlog
 from celery.signals import worker_process_init
+from langgraph.types import Command
+from sqlalchemy import select
 
-from argus.db.models import TERMINAL_STATUSES
+from argus.db.models import TERMINAL_STATUSES, Approval
 from argus.db.session import session_scope
 from argus.graph.runtime import get_compiled_graph
-from argus.graph.support import now_iso
+from argus.graph.support import escalation_field, now_iso
 from argus.repo import incidents as incident_repo
 from argus.worker.app import celery_app
 
@@ -29,6 +33,10 @@ def _warm_graph(**_: Any) -> None:
         log.warning("graph.warm_failed", exc_info=True)
 
 
+def _config(incident_id: str) -> dict[str, Any]:
+    return {"configurable": {"thread_id": incident_id}}
+
+
 def _initial_state(incident_id: str, alert: dict[str, Any]) -> dict[str, Any]:
     return {
         "incident_id": incident_id,
@@ -42,6 +50,59 @@ def _initial_state(incident_id: str, alert: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _park_for_human(incident_id: str, payload: dict[str, Any]) -> None:
+    """Open a PENDING approvals row + park the incident at WAITING_APPROVAL (idempotent)."""
+    level = (
+        "TAKE_OVER" if payload.get("kind") == "takeover" else payload.get("level", "APPROVE_ACTION")
+    )
+    with session_scope() as session:
+        existing = session.scalars(
+            select(Approval)
+            .where(Approval.incident_id == incident_id, Approval.status == "PENDING")
+            .order_by(Approval.created_at.desc())
+        ).first()
+        if existing is None:
+            session.add(
+                Approval(
+                    incident_id=incident_id,
+                    level=level,
+                    status="PENDING",
+                    proposed_action=payload.get("proposed_action") or {},
+                    context=payload.get("context") or {},
+                )
+            )
+        incident = incident_repo.get_incident(session, incident_id)
+        if incident is not None and incident.status != "WAITING_APPROVAL":
+            incident_repo.transition(
+                session,
+                incident,
+                "WAITING_APPROVAL",
+                status_reason="awaiting human decision",
+                **escalation_field(incident, level),
+            )
+
+
+def _finalize(incident_id: str, result: dict[str, Any]) -> str:
+    interrupts = result.get("__interrupt__")
+    if interrupts:
+        _park_for_human(incident_id, dict(interrupts[0].value))
+        return "waiting_approval"
+    with session_scope() as session:
+        incident = incident_repo.get_incident(session, incident_id)
+        return incident.status if incident is not None else "unknown"
+
+
+def _fail(incident_id: str, exc: Exception) -> str:
+    log.exception("incident.graph_failed", incident_id=incident_id)
+    with session_scope() as session:
+        incident = incident_repo.get_incident(session, incident_id)
+        if incident is not None and incident.status not in TERMINAL_STATUSES:
+            incident_repo.transition(
+                session, incident, "FAILED", status_reason=f"graph error: {exc}"
+            )
+    return "failed"
+
+
 @celery_app.task(name="argus.worker.tasks.run_incident")
 def run_incident(incident_id: str) -> str:
     with session_scope() as session:
@@ -53,28 +114,85 @@ def run_incident(incident_id: str) -> str:
 
     log.info("run_incident.start", incident_id=incident_id)
     try:
-        graph = get_compiled_graph()
-        graph.invoke(
-            _initial_state(incident_id, alert),
-            config={"configurable": {"thread_id": incident_id}},
+        result = get_compiled_graph().invoke(
+            _initial_state(incident_id, alert), config=_config(incident_id)
         )
     except Exception as exc:
-        log.exception("run_incident.failed", incident_id=incident_id)
-        with session_scope() as session:
-            incident = incident_repo.get_incident(session, incident_id)
-            if incident is not None and incident.status not in TERMINAL_STATUSES:
-                incident_repo.transition(
-                    session, incident, "FAILED", status_reason=f"graph error: {exc}"
-                )
-        return "failed"
+        return _fail(incident_id, exc)
+    status = _finalize(incident_id, result)
+    log.info("run_incident.done", incident_id=incident_id, status=status)
+    return status
 
+
+def _seconds(start: datetime | None, end: datetime | None) -> int | None:
+    if start is None or end is None:
+        return None
+    return int((end - start).total_seconds())
+
+
+def _resume_payload(incident_id: str, approval_id: str | None) -> dict[str, Any] | None:
+    """Build the Command(resume=...) payload from the decided approvals row."""
     with session_scope() as session:
-        incident = incident_repo.get_incident(session, incident_id)
-        final = incident.status if incident is not None else "unknown"
-    log.info("run_incident.done", incident_id=incident_id, status=final)
-    return final
+        approval = session.get(Approval, approval_id) if approval_id else None
+        if approval is None:
+            approval = session.scalars(
+                select(Approval)
+                .where(Approval.incident_id == incident_id, Approval.status != "PENDING")
+                .order_by(Approval.created_at.desc())
+            ).first()
+        if approval is None or approval.status in ("PENDING", "AUTO", "ACK"):
+            return None
+        base = {
+            "approval_id": str(approval.id),
+            "comment": approval.decision_comment,
+            "human_review_seconds": _seconds(approval.created_at, approval.decided_at),
+        }
+        if approval.level == "TAKE_OVER":
+            resolution = approval.modified_action or {}
+            return {
+                **base,
+                "kind": "takeover",
+                "root_cause": resolution.get("root_cause"),
+                "action_taken": resolution.get("action_taken"),
+            }
+        if approval.status == "MODIFIED":
+            return {
+                **base,
+                "kind": "approval",
+                "decision": "modify",
+                "action": approval.modified_action,
+            }
+        if approval.status == "APPROVED":
+            return {
+                **base,
+                "kind": "approval",
+                "decision": "approve",
+                "action": approval.proposed_action,
+            }
+        return {**base, "kind": "approval", "decision": "reject"}
 
 
 @celery_app.task(name="argus.worker.tasks.resume_incident")
 def resume_incident(incident_id: str, approval_id: str | None = None) -> str:
-    raise NotImplementedError("resume_incident lands in M06")
+    # idempotency (08 #19): only a genuinely paused incident may resume
+    with session_scope() as session:
+        incident = incident_repo.get_incident(session, incident_id)
+        if incident is None:
+            return "unknown"
+        if incident.status != "WAITING_APPROVAL":
+            log.info("resume_incident.noop", incident_id=incident_id, status=incident.status)
+            return f"noop:{incident.status}"
+
+    payload = _resume_payload(incident_id, approval_id)
+    if payload is None:
+        log.warning("resume_incident.no_decision", incident_id=incident_id)
+        return "no_decision"
+
+    log.info("resume_incident.start", incident_id=incident_id, decision=payload.get("decision"))
+    try:
+        result = get_compiled_graph().invoke(Command(resume=payload), config=_config(incident_id))
+    except Exception as exc:
+        return _fail(incident_id, exc)
+    status = _finalize(incident_id, result)
+    log.info("resume_incident.done", incident_id=incident_id, status=status)
+    return status

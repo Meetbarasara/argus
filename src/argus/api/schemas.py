@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -60,6 +60,21 @@ class IncidentDetail(IncidentSummary):
     tokens_out: int = 0
     tool_calls_count: int = 0
     approvals: list[dict[str, Any]] = []
+
+
+class ApprovalDecision(BaseModel):
+    """Body for POST /approvals/{id}/decision (03 §4)."""
+
+    decision: Literal["approve", "reject", "modify", "ack"]
+    comment: str | None = None
+    modified_action: dict[str, Any] | None = None  # required when decision == "modify"
+
+
+class TakeoverResolution(BaseModel):
+    """Body for POST /incidents/{id}/takeover_resolution (03 §4)."""
+
+    root_cause: str
+    action_taken: str
 
 
 class HealthConfig(BaseModel):

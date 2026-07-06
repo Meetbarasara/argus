@@ -13,7 +13,7 @@
 | M03 | LLM layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (74) + integration 4/4 + live smoke 7/7 roles | a552414+ | Router/limits/retry/record-replay; real Gemini+Groq verified |
 | M04 | Tool layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (84) + tool-world 3/3 + all 9 tools logged | 496747e+ | 9 tools, permission-enforced, evidence verified vs live world |
 | M05 | Graph v1 | done | ✅ 2026-07-06 (clean; verify 84) | ✅ 2026-07-06 verify (99) + graph 9/9 + live S1 RESOLVED/NOTIFY + live S3 WAITING_APPROVAL + integration 8/8 + world 7/8 (S1 flake, green standalone) | cb994aa+ | Autonomous S1 resolution live; S3 approval hold; specialists use real tools |
-| M06 | Human-in-the-loop | todo | – | – | – | |
+| M06 | Human-in-the-loop | done | ✅ 2026-07-06 (clean; verify 99) | ✅ 2026-07-06 verify (104) + graph 11/11 + hitl 7/7 + live S3 approve→RESOLVED across a worker restart | (pending) | Real interrupts; approve/reject/modify/takeover; durable pause |
 | M07 | Memory | todo | – | – | – | |
 | M08 | Parallelism & resilience | todo | – | – | – | |
 | M09 | Observability | todo | – | – | – | |
@@ -145,6 +145,29 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
 
+### M06 — 2026-07-06 (human-in-the-loop — real interrupts)
+- Replaced M05's approval holds with LangGraph `interrupt()`. Probe confirmed a node
+  **re-runs from the top on resume**, so side effects (PENDING approvals row +
+  WAITING_APPROVAL status) live in the worker task, not the node. `human_approval` and
+  `take_over` are pure preamble → `interrupt(payload)` → route on the resume decision.
+- `worker/tasks.py` v2: run_incident detects `__interrupt__` → `_park_for_human`;
+  `resume_incident(incident_id, approval_id)` guards on status (idempotent, 08 #19) →
+  `graph.invoke(Command(resume=payload))`. `api/routers/approvals.py`: GET queue + POST
+  decision (atomic `UPDATE…RETURNING` flip → 409 on double-decide; `modify` re-validates +
+  re-gates, 422 if it raises risk; `ack` for NOTIFY). `incidents.py`: takeover_resolution.
+- Host `uv run poe verify` green — **104 unit** (+5 modify re-gate). `poe test-graph`
+  **11** (M05 a–e updated for the takeover interrupt + new f: APPROVE_ACTION approve→RESOLVED,
+  g: reject→replan). `test_hitl.py` (tester, in-process fake router + REAL PostgresSaver +
+  REAL approvals API) **7/7**: (i) approve→RESOLVED, (ii) reject→replan→approve→RESOLVED,
+  (iii) modify→modified action executed, (iv) double-decision→409, (v) duplicate resume→
+  no-op, (vi) takeover_resolution→TAKEN_OVER, (vii) fresh graph resumes from the Postgres
+  checkpoint (durability).
+- **Live S3 (record):** inject → incident `3ae068c1` WAITING_APPROVAL/APPROVE_ACTION with
+  a PENDING `rollback_deploy(d-0001)`. **`docker compose restart worker`**, then approve via
+  API → the restarted worker resumed from the durable checkpoint → REMEDIATING → **RESOLVED**
+  (MTTR 224s, rollback ok, world recovered). One `human` span, decision=approve,
+  human_review_seconds=107. 39 spans (node/llm/tool/policy/human).
+
 ### M05 — 2026-07-06 (graph v1 — the agents come alive)
 - Built the full LangGraph pipeline: `agents/` (schemas verbatim 04 §3, prompts, supervisor
   plan+synthesize, specialist tool-loop, reviewer), `policy/risk_gate.py` (pure), `graph/`
@@ -261,6 +284,10 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-06 | run_incident: nodes own all status transitions via incident_repo; the task only invokes the graph + maps unhandled errors → FAILED | Reconciles M05's "map outcomes → status" with the "no node writes status except via incident_repo" acceptance gate | None |
 | 2026-07-06 | PostgresSaver built from a psycopg `Connection(autocommit=True, row_factory=dict_row)` via a per-process `lru_cache` singleton; `.setup()` on `worker_process_init` (08 #17). Graph tests use MemorySaver | langgraph-checkpoint-postgres needs a live sync connection; lazy per-fork build avoids sharing an fd across Celery prefork children | None |
 | 2026-07-06 | M05 regression `-m world` tier run with the worker **paused**; `test_platform` v0 "graph not implemented → FAILED" assertion updated to M05 handoff (incident leaves OPEN) | M05 is the first milestone where the worker actively remediates; a live worker would race the world tests' own inject/remediate cycle (esp. S3 double-rollback). Worker's live behavior is proven separately by the S1/S3 live gates | World tier validates the world in isolation, as designed pre-M05 |
+| 2026-07-06 | M06: interrupt side effects (approvals row + WAITING_APPROVAL) live in the worker task, not the interrupt node | LangGraph re-runs a node from the top on resume (verified by probe) — pre-interrupt side effects would double-fire | Node interior stays pure preamble + interrupt() + post-resume routing |
+| 2026-07-06 | `take_over` became an interrupt (was a terminal hold in M05): parks WAITING_APPROVAL with a PENDING TAKE_OVER approval, resumes to TAKEN_OVER via `/incidents/{id}/takeover_resolution` | M06 makes every escalation a real human hand-off | M05 graph tests (c)/(d) updated to resume through the takeover interrupt |
+| 2026-07-06 | Atomic decision flip via `UPDATE … RETURNING` (not `.rowcount`); takeover resolution `{root_cause, action_taken}` stored in the approval's `modified_action` jsonb | SQLAlchemy 2.0 `Result` has no typed `rowcount`; takeover has no dedicated column | Race-safe (409 on double-decide); resume reads the resolution from the row |
+| 2026-07-06 | `test_hitl` drives the graph in-process (fake router + real PostgresSaver + real approvals API), not via the celery worker with baked fake scripts | Avoids shipping test fixtures in the prod image + the FakeLLM-singleton multi-incident script exhaustion; the celery→worker→resume path + worker-restart durability is proven by the live S3 gate | Deterministic HITL suite; live path covered separately |
 
 ## Environment facts (fill during build)
 

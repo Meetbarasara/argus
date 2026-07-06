@@ -16,21 +16,6 @@ def _todo(feature: str, milestone: str) -> NoReturn:
     raise HTTPException(status_code=501, detail=f"{feature} is implemented in {milestone}")
 
 
-@router.get("/approvals")
-def list_approvals(status: str | None = None) -> Any:
-    _todo("approvals queue", "M06")
-
-
-@router.post("/approvals/{approval_id}/decision")
-def approval_decision(approval_id: str) -> Any:
-    _todo("approval decisions", "M06")
-
-
-@router.post("/incidents/{incident_id}/takeover_resolution")
-def takeover_resolution(incident_id: str) -> Any:
-    _todo("takeover resolution", "M06")
-
-
 @router.get("/memories")
 def list_memories(query: str | None = None, kind: str | None = None) -> Any:
     _todo("memory browsing", "M07")

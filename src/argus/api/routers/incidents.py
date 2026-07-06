@@ -3,17 +3,18 @@ empty until M03+ populate them, but the endpoints exist now so the UI has stable
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from argus.api.schemas import IncidentDetail, IncidentSummary
+from argus.api.schemas import IncidentDetail, IncidentSummary, TakeoverResolution
 from argus.db.models import Approval, LLMCall, Span
 from argus.db.session import get_db
 from argus.repo import incidents as incident_repo
+from argus.worker.app import celery_app
 
 router = APIRouter()
 
@@ -82,6 +83,43 @@ def get_incident_spans(
         select(Span).where(Span.incident_id == incident_id).order_by(Span.started_at)
     ).all()
     return [_span_dict(s) for s in spans]
+
+
+@router.post("/incidents/{incident_id}/takeover_resolution")
+def takeover_resolution(
+    incident_id: str, body: TakeoverResolution, session: Session = Depends(get_db)
+) -> dict[str, Any]:
+    if incident_repo.get_incident(session, incident_id) is None:
+        raise HTTPException(status_code=404, detail="incident not found")
+    approval = session.scalars(
+        select(Approval)
+        .where(
+            Approval.incident_id == incident_id,
+            Approval.level == "TAKE_OVER",
+            Approval.status == "PENDING",
+        )
+        .order_by(Approval.created_at.desc())
+    ).first()
+    if approval is None:
+        raise HTTPException(status_code=409, detail="no pending take-over for this incident")
+
+    flipped = session.execute(
+        update(Approval)
+        .where(Approval.id == approval.id, Approval.status == "PENDING")
+        .values(
+            status="APPROVED",
+            decided_at=datetime.now(UTC),
+            decided_by="human",
+            modified_action={"root_cause": body.root_cause, "action_taken": body.action_taken},
+        )
+        .returning(Approval.id)
+    ).first()
+    if flipped is None:
+        raise HTTPException(status_code=409, detail="take-over already resolved")
+    session.commit()
+
+    celery_app.send_task("argus.worker.tasks.resume_incident", args=[incident_id, str(approval.id)])
+    return {"status": "resolved"}
 
 
 @router.get("/llm_calls/{llm_call_id}")

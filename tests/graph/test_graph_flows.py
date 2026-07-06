@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 from sqlalchemy import select
 
 from argus.db.models import Approval, Span
@@ -87,6 +88,23 @@ def _hypothesis_restart_redis() -> str:
     )
 
 
+def _hypothesis_rollback(deploy_id: str = "d-0001") -> str:
+    return json.dumps(
+        {
+            "root_cause": f"a bad deploy ({deploy_id}) changed shopapi's payment_url",
+            "affected_services": ["shopapi"],
+            "confidence": 0.9,
+            "supporting_evidence": [{"kind": "deploy", "ref": deploy_id, "excerpt": "payment_url"}],
+            "proposed_action": {
+                "tool": "rollback_deploy",
+                "params": {"deploy_id": deploy_id},
+                "target_service": "shopapi",
+                "rationale": "roll back the bad deploy",
+            },
+        }
+    )
+
+
 def _verdict(verdict: str) -> str:
     return json.dumps(
         {
@@ -136,6 +154,36 @@ def _alert(service: str) -> dict[str, Any]:
     }
 
 
+def _alert_error_rate(service: str) -> dict[str, Any]:
+    return {
+        "alert_id": "a-" + uuid.uuid4().hex[:6],
+        "rule": "high_error_rate",
+        "service": service,
+        "severity": "critical",
+        "ts": "2026-07-05T10:00:00.000Z",
+        "window_seconds": 60,
+        "observed": {"metric": "err_rate_60s", "value": 0.42, "threshold": 0.2},
+        "labels": {},
+        "summary": f"{service} err_rate_60s=0.42 breached > 0.2",
+    }
+
+
+def _rollback_scripts() -> dict[str, list[str]]:
+    return {
+        # plan, hypothesis, then plan, hypothesis again to serve a reject -> replan cycle
+        "supervisor": [
+            _plan_three_steps(),
+            _hypothesis_rollback(),
+            _plan_three_steps(),
+            _hypothesis_rollback(),
+        ],
+        "log_analyst": [_finding("log_analyst", "log", "logs/shopapi.jsonl")],
+        "metrics_analyst": [_finding("metrics_analyst", "metric", "err_rate_60s")],
+        "change_analyst": [_finding("change_analyst", "deploy", "d-0001")],
+        "reviewer": [_verdict("approve")],
+    }
+
+
 def _create_incident(alert: dict[str, Any]) -> str:
     with session_scope() as session:
         incident = incident_repo.create_incident(session, alert)
@@ -143,9 +191,16 @@ def _create_incident(alert: dict[str, Any]) -> str:
         return str(incident.id)
 
 
-def _run(deps: GraphDeps, incident_id: str, alert: dict[str, Any], **budget: Any) -> dict[str, Any]:
-    graph = build_graph(deps, MemorySaver())
-    initial = {
+def _cfg(incident_id: str) -> dict[str, Any]:
+    return {"configurable": {"thread_id": incident_id}}
+
+
+def _compile(deps: GraphDeps) -> Any:
+    return build_graph(deps, MemorySaver())
+
+
+def _initial(incident_id: str, alert: dict[str, Any], **budget: Any) -> dict[str, Any]:
+    return {
         "incident_id": incident_id,
         "alert": alert,
         "service_catalog": {},
@@ -155,7 +210,10 @@ def _run(deps: GraphDeps, incident_id: str, alert: dict[str, Any], **budget: Any
         "remediation_attempts": [],
         "budget": {"llm_calls_used": 0, "started_at_iso": datetime.now(UTC).isoformat(), **budget},
     }
-    return graph.invoke(initial, config={"configurable": {"thread_id": incident_id}})
+
+
+def _run(deps: GraphDeps, incident_id: str, alert: dict[str, Any], **budget: Any) -> dict[str, Any]:
+    return _compile(deps).invoke(_initial(incident_id, alert, **budget), config=_cfg(incident_id))
 
 
 def _incident(incident_id: str) -> Any:
@@ -238,7 +296,7 @@ def test_b_revise_then_approve(
     assert verdicts == ["revise", "approve"]
 
 
-# --- (c) reviewer rejects twice -> TAKEN_OVER -----------------------------------------
+# --- (c) reviewer rejects twice -> take_over interrupt -> human resolution -> TAKEN_OVER
 def test_c_reject_twice_takes_over(worldstate: Path) -> None:
     service = f"shopapi-{uuid.uuid4().hex[:8]}"
     alert = _alert(service)
@@ -246,32 +304,92 @@ def test_c_reject_twice_takes_over(worldstate: Path) -> None:
 
     scripts = _happy_path_scripts()
     scripts["reviewer"] = [_verdict("reject")]  # length-1 repeats -> both reviews reject
-    final = _run(_make_deps(scripts), incident_id, alert)
+    graph = _compile(_make_deps(scripts))
+    paused = graph.invoke(_initial(incident_id, alert), config=_cfg(incident_id))
 
+    intr = paused.get("__interrupt__")
+    assert intr and intr[0].value["kind"] == "takeover"
+    assert "reviewer" in intr[0].value["reason"]
+
+    final = graph.invoke(
+        Command(resume={"root_cause": "manual triage", "action_taken": "restarted by hand"}),
+        config=_cfg(incident_id),
+    )
     inc = _incident(incident_id)
     assert inc.status == "TAKEN_OVER"
-    assert inc.status_reason and "reviewer" in inc.status_reason
-    assert [v.verdict for v in final["review_history"]] == ["reject", "reject"]
-    # a PENDING TAKE_OVER approvals row is opened for the human
-    approvals = _approvals(incident_id)
-    assert any(a.level == "TAKE_OVER" and a.status == "PENDING" for a in approvals)
     assert inc.remediation is None
+    assert [v.verdict for v in final["review_history"]] == ["reject", "reject"]
 
 
-# --- (d) budget breach -> TAKEN_OVER --------------------------------------------------
+# --- (d) budget breach -> take_over interrupt -> TAKEN_OVER ---------------------------
 def test_d_budget_breach_takes_over(worldstate: Path) -> None:
     service = f"shopapi-{uuid.uuid4().hex[:8]}"
     alert = _alert(service)
     incident_id = _create_incident(alert)
 
     # start already at the LLM-call limit: the first LLM node (plan) guard trips
-    final = _run(_make_deps(_happy_path_scripts()), incident_id, alert, llm_calls_used=40)
+    graph = _compile(_make_deps(_happy_path_scripts()))
+    paused = graph.invoke(_initial(incident_id, alert, llm_calls_used=40), config=_cfg(incident_id))
 
+    intr = paused.get("__interrupt__")
+    assert intr and intr[0].value["kind"] == "takeover"
+    assert "budget" in intr[0].value["reason"].lower()  # guard reason surfaced
+    assert paused.get("findings", []) == []  # short-circuited before any specialist ran
+
+    graph.invoke(
+        Command(resume={"root_cause": "over budget", "action_taken": "manual"}),
+        config=_cfg(incident_id),
+    )
+    assert _incident(incident_id).status == "TAKEN_OVER"
+
+
+# --- (f) APPROVE_ACTION pauses at human_approval, approve resumes to RESOLVED ----------
+def test_f_approve_action_pauses_then_resolves(
+    worldstate: Path, fake_actuator: list[tuple[str, dict[str, Any]]]
+) -> None:
+    service = f"shopapi-{uuid.uuid4().hex[:8]}"
+    alert = _alert_error_rate(service)
+    seed_metric(worldstate, service, "err_rate_60s", 0.0)  # recovered after rollback
+    incident_id = _create_incident(alert)
+
+    graph = _compile(_make_deps(_rollback_scripts()))
+    paused = graph.invoke(_initial(incident_id, alert), config=_cfg(incident_id))
+
+    intr = paused.get("__interrupt__")
+    assert intr and intr[0].value["kind"] == "approval"
+    assert intr[0].value["level"] == "APPROVE_ACTION"
+    assert intr[0].value["proposed_action"]["tool"] == "rollback_deploy"
+
+    action = intr[0].value["proposed_action"]
+    final = graph.invoke(
+        Command(resume={"decision": "approve", "action": action, "approval_id": "x"}),
+        config=_cfg(incident_id),
+    )
     inc = _incident(incident_id)
-    assert inc.status == "TAKEN_OVER"
-    assert inc.status_reason and "budget" in inc.status_reason.lower()
-    # guard short-circuited before any specialist ran
-    assert final.get("findings", []) == []
+    assert inc.status == "RESOLVED"
+    assert inc.remediation["action"]["tool"] == "rollback_deploy"
+    assert ("/rollback", {"deploy_id": "d-0001", "author": "agent"}) in fake_actuator
+    assert final["approval_decision"]["decision"] == "approve"
+    assert any(s.kind == "human" for s in _spans(incident_id))  # human span emitted
+
+
+# --- (g) reject at human_approval routes back to plan (replan) ------------------------
+def test_g_reject_replans(worldstate: Path) -> None:
+    service = f"shopapi-{uuid.uuid4().hex[:8]}"
+    alert = _alert_error_rate(service)
+    incident_id = _create_incident(alert)
+
+    graph = _compile(_make_deps(_rollback_scripts()))
+    graph.invoke(_initial(incident_id, alert), config=_cfg(incident_id))
+
+    resumed = graph.invoke(
+        Command(resume={"decision": "reject", "comment": "wrong deploy, look again"}),
+        config=_cfg(incident_id),
+    )
+    # replanned and paused again at human_approval; the reject was recorded as an attempt
+    assert resumed.get("__interrupt__")
+    assert len(resumed["remediation_attempts"]) >= 1
+    assert any("wrong deploy" in v.feedback for v in resumed["review_history"])
 
 
 # --- (e) risk-gate levels for all five scenarios (pure, grouped with the graph suite) --

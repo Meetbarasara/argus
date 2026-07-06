@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from argus.agents.schemas import RemediationAction
 from argus.db.session import session_scope
 from argus.errors import ToolError
 from argus.graph.support import now_iso, read_trace_id
@@ -15,10 +16,19 @@ from argus.repo import incidents as incident_repo
 from argus.tools.registry import ToolContext
 
 
+def _effective_action(state: dict[str, Any]) -> RemediationAction:
+    """The action to execute: a human-approved/modified action (M06 resume payload) if
+    present, otherwise the hypothesis's proposed action (AUTO/NOTIFY paths)."""
+    raw = (state.get("approval_decision") or {}).get("action")
+    if raw:
+        return RemediationAction.model_validate(raw)
+    return state["hypothesis"].proposed_action
+
+
 def remediate(state: dict[str, Any], deps: Any) -> dict[str, Any]:
     incident_id = state["incident_id"]
     trace_id = read_trace_id(incident_id)
-    action = state["hypothesis"].proposed_action
+    action = _effective_action(state)
 
     with session_scope() as session:
         incident = incident_repo.get_incident(session, incident_id)

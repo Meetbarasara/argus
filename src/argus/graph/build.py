@@ -84,6 +84,11 @@ def _route_review(deps: GraphDeps) -> Callable[[dict[str, Any]], str]:
     return route
 
 
+def _route_approval(state: dict[str, Any]) -> str:
+    decision = (state.get("approval_decision") or {}).get("decision")
+    return "remediate" if decision in ("approve", "modify") else "plan"
+
+
 def _route_gate(state: dict[str, Any]) -> str:
     level = (state.get("escalation") or {}).get("level", "TAKE_OVER")
     if level in ("AUTO", "NOTIFY"):
@@ -156,8 +161,10 @@ def build_graph(deps: GraphDeps, checkpointer: Any) -> Any:
     graph.add_edge("postmortem", "close")
     graph.add_edge("close", END)
 
-    # M05 holds: no interrupt yet — these terminal-park the incident and end the run.
-    graph.add_edge("human_approval", END)
-    graph.add_edge("take_over", END)
+    # M06 HITL: both nodes interrupt() and resume from their checkpoint. human_approval
+    # resumes to remediate (approve/modify) or plan (reject); take_over resumes to
+    # postmortem once a human posts a takeover resolution.
+    graph.add_conditional_edges("human_approval", _route_approval, ["remediate", "plan"])
+    graph.add_edge("take_over", "postmortem")
 
     return graph.compile(checkpointer=checkpointer)
