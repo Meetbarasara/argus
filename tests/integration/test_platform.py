@@ -48,21 +48,22 @@ def test_health_reports_ready() -> None:
     assert body["config"]["supervisor_model"]  # echo present
 
 
-def test_webhook_creates_incident_and_worker_reaches_failed_v0() -> None:
+def test_webhook_creates_incident_and_worker_starts_graph() -> None:
+    # M05: the worker now drives the LangGraph pipeline (M02's v0 "graph not implemented ->
+    # FAILED" is gone). Prove the pipe still hands off by watching the incident leave OPEN
+    # — intake transitions it to INVESTIGATING right after the worker picks up the task.
     r = httpx.post(f"{API}/api/alerts/webhook", json=_alert(), timeout=10)
     assert r.status_code == 201
     incident_id = r.json()["incident_id"]
 
-    status = None
-    deadline = time.time() + 25
+    status = "OPEN"
+    deadline = time.time() + 30
     while time.time() < deadline:
-        detail = httpx.get(f"{API}/api/incidents/{incident_id}", timeout=10).json()
-        status = detail["status"]
-        if status == "FAILED":
-            assert "graph not implemented" in (detail["status_reason"] or "")
+        status = httpx.get(f"{API}/api/incidents/{incident_id}", timeout=10).json()["status"]
+        if status != "OPEN":
             break
         time.sleep(1)
-    assert status == "FAILED"
+    assert status != "OPEN"  # worker consumed the task and the graph started
 
 
 def test_dedupe_partial_unique_index() -> None:

@@ -12,7 +12,7 @@
 | M02 | Platform core | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (54) + integration 4/4 + gate curl | 588e878+ | Alert→incident→worker pipe live; full schema migrated |
 | M03 | LLM layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (74) + integration 4/4 + live smoke 7/7 roles | a552414+ | Router/limits/retry/record-replay; real Gemini+Groq verified |
 | M04 | Tool layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (84) + tool-world 3/3 + all 9 tools logged | 496747e+ | 9 tools, permission-enforced, evidence verified vs live world |
-| M05 | Graph v1 | todo | – | – | – | |
+| M05 | Graph v1 | done | ✅ 2026-07-06 (clean; verify 84) | ✅ 2026-07-06 verify (99) + graph 9/9 + live S1 RESOLVED/NOTIFY + live S3 WAITING_APPROVAL + integration 8/8 + world 7/8 (S1 flake, green standalone) | (pending) | Autonomous S1 resolution live; S3 approval hold; specialists use real tools |
 | M06 | Human-in-the-loop | todo | – | – | – | |
 | M07 | Memory | todo | – | – | – | |
 | M08 | Parallelism & resilience | todo | – | – | – | |
@@ -145,6 +145,33 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
 
+### M05 — 2026-07-06 (graph v1 — the agents come alive)
+- Built the full LangGraph pipeline: `agents/` (schemas verbatim 04 §3, prompts, supervisor
+  plan+synthesize, specialist tool-loop, reviewer), `policy/risk_gate.py` (pure), `graph/`
+  (state, deps, support, verify, 13 node modules, build.py), `graph/runtime.py` (PostgresSaver
+  singleton), `worker/tasks.py` run_incident v1.
+- Host `uv run poe verify` green — **99 unit** (+15 risk_gate table). `uv run poe test-graph`
+  green — **9** (a: S1 happy path RESOLVED; b: revise→approve; c: reject×2→TAKEN_OVER;
+  d: budget breach→TAKEN_OVER; e: 5-scenario risk levels), FakeLLM + MemorySaver, platform pg.
+- **Live S1 (LLM_MODE=record), fully autonomous:** inject S1 → incident `7abc0255` →
+  `{"status":"RESOLVED","escalation_level":"NOTIFY"}` in ~50s (MTTR 50s). Remediation
+  `restart_service(shopredis)` ok; world recovered (redis dep up). **36 spans, all OK, one
+  trace**, kinds `{node:12, llm:14, tool:9, policy:1}` — specialists ran real tools
+  (search_logs, log_error_summary, query_metrics, service_health, list_deploys,
+  recent_actions, deploy_diff) + remediate restart_service. Counters: 14 llm / 9 tool calls,
+  10581/5440 tok, **$0.017**. AUTO NOTIFY approvals row present. root_cause = redis stopped.
+- **Live S3:** inject bad payment_url deploy (d-0001) → incident `76f2ca08` →
+  `WAITING_APPROVAL` / `APPROVE_ACTION`; remediation `null`; one **PENDING** approval
+  proposing `rollback_deploy(deploy_id=d-0001)` on shopapi. 32 spans incl. a `human` span.
+- Grep gates: no direct `incident.status =` writes in graph/worker (all 8 transitions via
+  `incident_repo.transition`); no prompt text outside `prompts.py`.
+- Integration tier (tester): `-m integration` **8/8** (test_platform incl. updated M05
+  handoff + test_llm_layer). `-m world` run with the worker paused (see deviations):
+  **7 passed, 1 failed** — `test_s1_redis_down` hit a pre-existing M01 timing flake
+  (`_wait_for_alert` accepts high_error_rate; reset-noise can fire one pre-fault so
+  `dep_up[redis]` still reads 1 at the assert). **Passes standalone (100s)**; S2–S5 +
+  tool-world all green. M05 changed no world/poller/actuator code → not an M05 regression.
+
 ### M04 — 2026-07-05 (tool layer — DONE)
 - `tools/`: worldstate (own defensive JSONL reader — no demoworld import; time-window filter;
   error-template normalization), schemas (9 Pydantic arg models), telemetry_tools (search_logs,
@@ -228,6 +255,12 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-05 | ruff: allow FastAPI Depends/Query/Body in arg defaults (flake8-bugbear extend-immutable-calls) | Idiomatic FastAPI DI pattern that bugbear (B008) flags | Lint config only |
 | 2026-07-05 | `settings.model_overrides()` reads `ARGUS_MODEL__*` env directly | Dynamic per-role keys can't be pydantic fields; kept in settings so env access stays there (03 §3 spec'd mechanism) | None |
 | 2026-07-05 | PEP 695 generic syntax (`def f[T: BaseModel]`) in parsing/router | ruff UP047 prefers it on py3.12 | None |
+| 2026-07-06 | review routing disambiguation: approve→gate; else if reviews ≥ max_review_loops → take_over; else → synthesize (revise OR reject loops back while under budget) | 04 §1 edge table only spells out revise<2→synthesize and reject≥2→take_over; this fills the reject-early / revise-late gaps deterministically and satisfies tests (b)/(c) | Behavior within plan intent ("reject after 2 loops → take_over") |
+| 2026-07-06 | Budget breach carried as a transient `breached` flag inside `state["budget"]` dict | State shape (04 §2) has no routing flag; budget is a free dict ({llm_calls_used, started_at_iso}); the guard sets breached and the post-node conditional edge routes to take_over | Additive transient key; no named-state-key divergence |
+| 2026-07-06 | Per-incident trace_id read from `incidents.trace_id` in each node (not a state key) | 04 §2 state has no trace_id; 03 §1 says intake writes incidents.trace_id — nodes read it so all node/llm/tool/policy spans share one trace | One small SELECT per node |
+| 2026-07-06 | run_incident: nodes own all status transitions via incident_repo; the task only invokes the graph + maps unhandled errors → FAILED | Reconciles M05's "map outcomes → status" with the "no node writes status except via incident_repo" acceptance gate | None |
+| 2026-07-06 | PostgresSaver built from a psycopg `Connection(autocommit=True, row_factory=dict_row)` via a per-process `lru_cache` singleton; `.setup()` on `worker_process_init` (08 #17). Graph tests use MemorySaver | langgraph-checkpoint-postgres needs a live sync connection; lazy per-fork build avoids sharing an fd across Celery prefork children | None |
+| 2026-07-06 | M05 regression `-m world` tier run with the worker **paused**; `test_platform` v0 "graph not implemented → FAILED" assertion updated to M05 handoff (incident leaves OPEN) | M05 is the first milestone where the worker actively remediates; a live worker would race the world tests' own inject/remediate cycle (esp. S3 double-rollback). Worker's live behavior is proven separately by the S1/S3 live gates | World tier validates the world in isolation, as designed pre-M05 |
 
 ## Environment facts (fill during build)
 
