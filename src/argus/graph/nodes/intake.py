@@ -3,11 +3,10 @@ the service catalog from policy, and start the wall-clock budget."""
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from argus.db.session import session_scope
-from argus.graph.support import now_iso
+from argus.graph.support import now_iso, read_trace_id
 from argus.obs.spans import span
 from argus.repo import incidents as incident_repo
 
@@ -27,7 +26,8 @@ def build_service_catalog(policy: dict[str, Any]) -> dict[str, Any]:
 
 def intake(state: dict[str, Any], deps: Any) -> dict[str, Any]:
     incident_id = state["incident_id"]
-    trace_id = uuid.uuid4().hex
+    # reuse the worker-opened trace (root span) if present; generate one for direct graph runs
+    trace_id = read_trace_id(incident_id)
     catalog = build_service_catalog(deps.policy)
 
     with (

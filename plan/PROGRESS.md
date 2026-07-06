@@ -16,7 +16,7 @@
 | M06 | Human-in-the-loop | done | ✅ 2026-07-06 (clean; verify 99) | ✅ 2026-07-06 verify (104) + graph 11/11 + hitl 7/7 + live S3 approve→RESOLVED across a worker restart | f8d1312+ | Real interrupts; approve/reject/modify/takeover; durable pause |
 | M07 | Memory | done | ✅ 2026-07-06 (clean; verify 104) | ✅ 2026-07-06 verify (119) + graph 12/12 + memory 4/4 + live repeat 13→6 LLM calls (54% lift) | 03eb924+ | pgvector recall + postmortem + fast-path; memory-lift proven |
 | M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | 6906152 | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
-| M09 | Observability | todo | – | – | – | |
+| M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | (pending) | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | todo | – | – | – | |
 | M11 | Evaluation harness | todo | – | – | – | |
 | M12 | Demo & docs | todo | – | – | – | |
@@ -144,6 +144,39 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - **Only remaining M01 item: the automated 5-scenario world gate** (tester container:
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
+
+### M09 — 2026-07-07 (observability — dual sink, dashboard, root span — DONE)
+- **OTel dual sink (ADR-07):** `obs/otel.py` wires a TracerProvider at api/worker boot
+  (`setup_tracing`) with an OTLP→Jaeger BatchSpanProcessor **only** when
+  `OTEL_EXPORT_JAEGER=true`; the Postgres exporter stays the primary sink. `obs/spans.py`
+  now mirrors each span to the OTLP sink (parent linked via an in-process span map) and
+  **auto-parents** any parentless node span to the incident's root span — no per-node edits.
+- **Root span (08 #24):** the worker opens one `incident` root span around `graph.invoke`
+  (run + resume), writes its trace_id to `incidents.trace_id`, and registers it so every span
+  becomes a child; `intake` reuses that trace (fresh one for direct graph runs). One incident
+  = one trace.
+- `obs/pg_exporter.py`: per-attr 2 KB cap with a WARN on truncation (nothing dropped
+  silently); ERROR status already captured. `api/routers/dashboard.py`: GET
+  /dashboard/summary — pure-SQL rollups (status counts, resolution/escalation rates, avg+median
+  MTTR, cost+tokens by role/model, per-incident cost, steps-to-diagnosis, memory share),
+  replacing the 501 stub. compose: `jaeger` (observability profile, OTLP) + endpoint plumbed.
+- Host `uv run poe verify` green — **141 unit** (+8: span attr contract per kind). `poe
+  test-graph` **19** (unchanged). `test_dashboard.py` (tester) **2/2**: /dashboard/summary
+  reconciles with direct SQL on incidents/llm_calls (self-consistent) + real emitted spans
+  satisfy the per-kind attr contract.
+- **Live `GET /api/dashboard/summary`** → sane non-null: total 133, resolution 0.56,
+  escalation 0.53, avg_mttr 5.04s, cost $0.241, steps-to-diagnosis 9.8.
+- **Jaeger smoke (record):** `--profile observability up jaeger`, `OTEL_EXPORT_JAEGER=true`,
+  inject S1 → Jaeger service `argus-worker` shows **one trace, 34 spans, single `incident`
+  root**, full hierarchy (intake→recall→plan→3 specialists w/ real llm+tool spans→synthesize→
+  review). Verified via the Jaeger query API. Gemini daily quota exhausted → supervisor/reviewer
+  routed to Groq for the run (the span tree is provider-independent).
+- **Jaeger off (default) ⇒ nothing degrades:** the OTLP setup is a guarded no-op; all host +
+  graph + integration tiers pass with `OTEL_EXPORT_JAEGER=false`. Integration tier green; the
+  `test_platform` webhook backlog flake + a leftover-incident dedupe clash from the live smoke
+  both cleared on isolated re-run (env, not M09).
+- **Deferred:** `docs/img/jaeger.png` screenshot → M12 docs assembly (needs a browser; the
+  live trace is proven here via the Jaeger query API). 08 #25 (dev CORS) was handled in M02.
 
 ### M08 — 2026-07-06 (parallel specialists & resilience — DONE)
 - Specialists swapped from the M05 sequential chain to a **Send-API parallel fan-out**
@@ -357,6 +390,9 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-06 | M08: `counter_rollup` reports `llm_calls` from the authoritative DB row count (was `budget.llm_calls_used or count`) | specialists no longer bill `budget.llm_calls_used`, so the logged-row count is the accurate total incl. specialists; keeps the M07 memory-lift metric correct | Reporting only; the guard stays state-based (test_d seeds budget in state) |
 | 2026-07-06 | M08 introduces a `gather` join node (not named in 04 §1) between the specialist fan-out and synthesize | The Send API needs a single fan-in anchor for the post-wave budget re-check, the >50%-degraded escalation, and the dependent-wave dispatch; per-branch checks would race/duplicate | Deterministic control-only node (no LLM, no status write); 04 §1 behaviour contract preserved |
 | 2026-07-06 | M08 live parallelism proof routed supervisor+reviewer to Groq via `ARGUS_MODEL__*` env overrides for one S1 run | Gemini free-tier daily request quota was exhausted (429 RESOURCE_EXHAUSTED); the span-overlap property is provider-independent (specialists are Groq either way) | Live proof only; in-repo `models.yaml`/roles unchanged and `.env` overrides reverted after; autonomous resolution proven at M05/M07 |
+| 2026-07-07 | M09: the OTLP→Jaeger sink *mirrors* each span from `obs.spans` (parent linked via an in-process span map) instead of replacing the Postgres write with an OTel SpanProcessor | our spans thread explicit parent_span_ids across LangGraph's thread pool (not OTel context); mirroring keeps the tested Postgres sink primary while giving Jaeger a correct single-rooted tree | Best-effort second sink; guarded so Jaeger off/down changes nothing |
+| 2026-07-07 | M09 root `incident` span opened in the worker (not a graph node) + an in-process registry so `obs.spans` auto-parents node spans to it | avoids editing all ~15 node span sites; direct graph/unit runs (no worker) keep parentless roots, unchanged | trace_id still originates once (worker → incidents.trace_id; intake reuses it); one incident = one trace |
+| 2026-07-07 | M09 live Jaeger smoke routed supervisor+reviewer to Groq (Gemini daily quota exhausted) and verified the trace via the Jaeger query API; `docs/img/jaeger.png` screenshot deferred to M12 | see [[argus-live-gate-ops]]; the span-tree hierarchy is provider-independent, and the PNG is an M12 `docs/img/` deliverable | Live-proof `.env` config reverted (gitignored) |
 
 ## Environment facts (fill during build)
 

@@ -16,11 +16,6 @@ def _todo(feature: str, milestone: str) -> NoReturn:
     raise HTTPException(status_code=501, detail=f"{feature} is implemented in {milestone}")
 
 
-@router.get("/dashboard/summary")
-def dashboard_summary() -> Any:
-    _todo("dashboard summary", "M09")
-
-
 @router.get("/evals/runs")
 def list_eval_runs() -> Any:
     _todo("eval runs", "M11")

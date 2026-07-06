@@ -6,6 +6,7 @@ idempotency check (08 #19)."""
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -18,7 +19,9 @@ from sqlalchemy import select
 from argus.db.models import TERMINAL_STATUSES, Approval
 from argus.db.session import session_scope
 from argus.graph.runtime import get_compiled_graph
-from argus.graph.support import escalation_field, now_iso
+from argus.graph.support import escalation_field, now_iso, read_trace_id
+from argus.obs import otel
+from argus.obs.spans import span
 from argus.policy.risk_gate import load_policy
 from argus.repo import incidents as incident_repo
 from argus.worker.app import celery_app
@@ -37,7 +40,9 @@ _HARD_TIME_LIMIT_S = _MAX_WALL_S + 120
 
 @worker_process_init.connect
 def _warm_graph(**_: Any) -> None:
-    """Compile the graph + run the checkpointer .setup() once per worker child (08 #17)."""
+    """Compile the graph + run the checkpointer .setup() once per worker child (08 #17), and
+    wire OTel (adds the Jaeger sink only when OTEL_EXPORT_JAEGER=true — M09/ADR-07)."""
+    otel.setup_tracing("argus-worker")
     try:
         get_compiled_graph()
     except Exception:  # DB may not be ready yet; the first task will retry lazily
@@ -46,6 +51,19 @@ def _warm_graph(**_: Any) -> None:
 
 def _config(incident_id: str) -> dict[str, Any]:
     return {"configurable": {"thread_id": incident_id}}
+
+
+def _invoke_rooted(incident_id: str, trace_id: str, graph_input: Any) -> dict[str, Any]:
+    """Run the graph inside one ``incident`` root span so every span an incident emits is a
+    child of it (08 #24) — a single rooted trace for the UI and Jaeger. The root is registered
+    while the graph runs so ``obs.spans`` auto-parents the node spans to it."""
+    compiled = get_compiled_graph()
+    with span("incident", "node", incident_id=incident_id, trace_id=trace_id) as root:
+        otel.register_root(incident_id, root.span_id)
+        try:
+            return compiled.invoke(graph_input, config=_config(incident_id))
+        finally:
+            otel.clear_root(incident_id)
 
 
 def _initial_state(incident_id: str, alert: dict[str, Any]) -> dict[str, Any]:
@@ -137,18 +155,19 @@ def _fail_timeout(incident_id: str) -> str:
     time_limit=_HARD_TIME_LIMIT_S,
 )
 def run_incident(incident_id: str) -> str:
+    trace_id = uuid.uuid4().hex
     with session_scope() as session:
         incident = incident_repo.get_incident(session, incident_id)
         if incident is None:
             log.warning("run_incident.unknown", incident_id=incident_id)
             return "unknown"
         alert = dict(incident.alert)
+        incident.trace_id = trace_id  # the root span + intake reuse this one trace (08 #24)
+        session.add(incident)
 
     log.info("run_incident.start", incident_id=incident_id)
     try:
-        result = get_compiled_graph().invoke(
-            _initial_state(incident_id, alert), config=_config(incident_id)
-        )
+        result = _invoke_rooted(incident_id, trace_id, _initial_state(incident_id, alert))
     except SoftTimeLimitExceeded:
         return _fail_timeout(incident_id)
     except Exception as exc:
@@ -228,7 +247,8 @@ def resume_incident(incident_id: str, approval_id: str | None = None) -> str:
 
     log.info("resume_incident.start", incident_id=incident_id, decision=payload.get("decision"))
     try:
-        result = get_compiled_graph().invoke(Command(resume=payload), config=_config(incident_id))
+        # reuse the incident's existing trace so the resumed leg joins the same tree
+        result = _invoke_rooted(incident_id, read_trace_id(incident_id), Command(resume=payload))
     except SoftTimeLimitExceeded:
         return _fail_timeout(incident_id)
     except Exception as exc:

@@ -32,6 +32,8 @@ class Settings(BaseSettings):
 
     # Observability
     otel_export_jaeger: bool = False
+    otel_exporter_otlp_endpoint: str = "http://jaeger:4317"
+    git_sha: str = "dev"  # resource attr on spans (set at build/deploy)
     dev_mode: bool = False
 
     def api_key_for(self, env_key: str) -> str:

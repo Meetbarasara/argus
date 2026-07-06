@@ -44,6 +44,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ACTUATOR_URL: http://actuator:8000
       WORLDSTATE_PATH: /worldstate
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317  # used only when OTEL_EXPORT_JAEGER=true
     ports: ["8080:8080"]
     volumes: [worldstate:/worldstate:ro]
     depends_on:
@@ -66,6 +67,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ACTUATOR_URL: http://actuator:8000
       WORLDSTATE_PATH: /worldstate
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317  # used only when OTEL_EXPORT_JAEGER=true
     volumes: [worldstate:/worldstate:ro]
     depends_on:
       postgres: {condition: service_healthy}

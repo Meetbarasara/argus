@@ -7,13 +7,23 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from argus.api.routers import alerts, approvals, health, incidents, memories, stubs
+from argus.api.routers import (
+    alerts,
+    approvals,
+    dashboard,
+    health,
+    incidents,
+    memories,
+    stubs,
+)
 from argus.errors import ArgusError, PolicyError
+from argus.obs import otel
 from argus.settings import get_settings
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Argus API", version="0.1.0")
+    otel.setup_tracing("argus-api")  # adds the Jaeger sink only when OTEL_EXPORT_JAEGER=true
 
     if get_settings().dev_mode:  # permissive CORS only for the Vite dev server (08 #25)
         app.add_middleware(
@@ -29,6 +39,7 @@ def create_app() -> FastAPI:
         incidents.router,
         approvals.router,
         memories.router,
+        dashboard.router,
         stubs.router,
     )
     for r in routers:

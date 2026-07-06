@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from argus.obs import otel
 from argus.obs.pg_exporter import write_span
 
 
@@ -40,7 +41,14 @@ def span(
         incident_id=incident_id,
         attrs=dict(attrs or {}),
     )
+    # auto-parent to the incident's root span (the worker registers it around graph.invoke),
+    # so every span in an incident forms one rooted tree (08 #24). No root registered (e.g. a
+    # graph/unit test) -> the passed parent (usually None) stands.
+    effective_parent = parent_span_id or otel.current_root(incident_id)
     started = datetime.now(UTC)
+    otel.start_span(
+        handle.span_id, name, kind, incident_id, effective_parent, started, handle.attrs
+    )
     status = "OK"
     try:
         yield handle
@@ -49,12 +57,13 @@ def span(
         raise
     finally:
         ended = datetime.now(UTC)
+        otel.end_span(handle.span_id, status, ended, handle.attrs)
         write_span(
             {
                 "span_id": handle.span_id,
                 "trace_id": handle.trace_id,
                 "incident_id": incident_id,
-                "parent_span_id": parent_span_id,
+                "parent_span_id": effective_parent,
                 "name": name,
                 "kind": kind,
                 "status": status,
