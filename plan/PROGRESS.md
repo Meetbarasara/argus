@@ -14,7 +14,7 @@
 | M04 | Tool layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (84) + tool-world 3/3 + all 9 tools logged | 496747e+ | 9 tools, permission-enforced, evidence verified vs live world |
 | M05 | Graph v1 | done | ✅ 2026-07-06 (clean; verify 84) | ✅ 2026-07-06 verify (99) + graph 9/9 + live S1 RESOLVED/NOTIFY + live S3 WAITING_APPROVAL + integration 8/8 + world 7/8 (S1 flake, green standalone) | cb994aa+ | Autonomous S1 resolution live; S3 approval hold; specialists use real tools |
 | M06 | Human-in-the-loop | done | ✅ 2026-07-06 (clean; verify 99) | ✅ 2026-07-06 verify (104) + graph 11/11 + hitl 7/7 + live S3 approve→RESOLVED across a worker restart | f8d1312+ | Real interrupts; approve/reject/modify/takeover; durable pause |
-| M07 | Memory | todo | – | – | – | |
+| M07 | Memory | done | ✅ 2026-07-06 (clean; verify 104) | ✅ 2026-07-06 verify (119) + graph 12/12 + memory 4/4 + live repeat 13→6 LLM calls (54% lift) | (pending) | pgvector recall + postmortem + fast-path; memory-lift proven |
 | M08 | Parallelism & resilience | todo | – | – | – | |
 | M09 | Observability | todo | – | – | – | |
 | M10 | React UI | todo | – | – | – | |
@@ -144,6 +144,30 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - **Only remaining M01 item: the automated 5-scenario world gate** (tester container:
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
+
+### M07 — 2026-07-06 (memory — write, recall, fast-path, management)
+- `src/argus/memory/`: `embedder` (fastembed bge-small-en-v1.5, 384-d, lazy + baked into
+  the image — 08 #22), `vectorstore` Protocol (Pinecone-swappable, ADR-01) + `pgvector_store`
+  (cosine over the memories HNSW index), `fingerprint` (deterministic {alert_rule, services,
+  templates} via the M04 normalizer + embed-text builders), `scoring`
+  (`0.6·sim + 0.2·recency(30d) + 0.2·log1p(use_count)`), `recall` (top-5, bumps usage,
+  fast-path when top sim > 0.92 AND source RESOLVED), `writer` (memory_writer LLM postmortem;
+  take-overs become deterministic 'lesson' memories), `consolidate` (cosine≥0.90 clusters →
+  merge + supersede, importance decay 0.98^idle floor 0.1).
+- Nodes `recall_memory` + `postmortem` replace the M05 no-ops (recall/writer injected via
+  GraphDeps so host graph tests stay embedder-free; both honor MEMORY_ENABLED). `memories`
+  API (list/vector-search/delete/consolidate) replaces the stubs.
+- Host `uv run poe verify` green — **119 unit** (scoring/recency goldens, fingerprint,
+  consolidation clustering, modify re-gate). `poe test-graph` **12** (+h: recall injects the
+  memory block + fast-path, never skipping review/risk_gate).
+- `test_memory.py` (tester, real pgvector + baked embedder) **4/4**: write→recall round
+  trip, delete stops recall, consolidation merges a near-duplicate pair (originals
+  superseded), and the repeat test (run #1 seeds → run #2 memory_used=true + plan prompt
+  carries the memory block). Model baked into the image (08 #22).
+- **Live memory-lift (record):** clean slate → S1 run A `ecedf03b` (memory_used=false,
+  **13 LLM calls**, wrote memory) → S1 run B `6065f0c0` (memory_used=**true**, **6 LLM
+  calls**) = **54% fewer** (target ≥20%). `GET /api/memories` → 2 (run A's use_count bumped
+  by run B's recall); vector search `?query=redis+down` returns the memory (sim 0.65).
 
 ### M06 — 2026-07-06 (human-in-the-loop — real interrupts)
 - Replaced M05's approval holds with LangGraph `interrupt()`. Probe confirmed a node
@@ -288,6 +312,9 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-06 | `take_over` became an interrupt (was a terminal hold in M05): parks WAITING_APPROVAL with a PENDING TAKE_OVER approval, resumes to TAKEN_OVER via `/incidents/{id}/takeover_resolution` | M06 makes every escalation a real human hand-off | M05 graph tests (c)/(d) updated to resume through the takeover interrupt |
 | 2026-07-06 | Atomic decision flip via `UPDATE … RETURNING` (not `.rowcount`); takeover resolution `{root_cause, action_taken}` stored in the approval's `modified_action` jsonb | SQLAlchemy 2.0 `Result` has no typed `rowcount`; takeover has no dedicated column | Race-safe (409 on double-decide); resume reads the resolution from the row |
 | 2026-07-06 | `test_hitl` drives the graph in-process (fake router + real PostgresSaver + real approvals API), not via the celery worker with baked fake scripts | Avoids shipping test fixtures in the prod image + the FakeLLM-singleton multi-incident script exhaustion; the celery→worker→resume path + worker-restart durability is proven by the live S3 gate | Deterministic HITL suite; live path covered separately |
+| 2026-07-06 | M07 consolidation merge is deterministic (combine titles/contents + union fingerprints), not an LLM-merge | Consolidation is a maintenance op; deterministic merge is reliable + testable and spends no LLM quota on housekeeping | Originals still superseded_by the merged memory (acceptance met) |
+| 2026-07-06 | recall/write_postmortem injected via GraphDeps (defaults = real memory fns); postmortem's memory_writer call is not billed to the investigation budget | Keeps host graph tests embedder-free; llm_calls counts investigation calls consistently across runs (matters for the memory-lift comparison) | test_memory drives the graph in-process with the real memory fns + PostgresSaver |
+| 2026-07-06 | Live memory-lift used a prior clean S1 run (ecedf03b, 13 calls, no memory) as run A rather than re-running | It was already a valid clean baseline that wrote the seed memory; run B (6 calls) recalled it — both S1, memory ON | Saved one full live run; 54% lift recorded |
 
 ## Environment facts (fill during build)
 

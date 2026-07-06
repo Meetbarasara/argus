@@ -9,6 +9,8 @@ COPY config/ config/
 COPY alembic.ini ./
 RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
+# bake the embedding model so recall/postmortem run offline + fast at runtime (08 #22)
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 
 FROM base AS dev
 RUN uv sync --frozen

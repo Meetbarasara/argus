@@ -129,7 +129,12 @@ def _happy_path_scripts() -> dict[str, list[str]]:
     }
 
 
-def _make_deps(scripts: dict[str, list[str]]) -> GraphDeps:
+def _no_recall(_alert: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    return [], None
+
+
+def _make_deps(scripts: dict[str, list[str]], recall: Any = None) -> GraphDeps:
+    # memory hooks are stubbed so host graph tests never load the embedder or hit pgvector
     return GraphDeps(
         router=LLMRouter(mode="fake", fake=FakeLLM(scripts)),
         executor=ToolExecutor(),
@@ -137,6 +142,8 @@ def _make_deps(scripts: dict[str, list[str]]) -> GraphDeps:
         recovery_interval_s=0.0,
         recovery_deadline_s=1.0,
         recovery_sleep=lambda _s: None,
+        recall=recall or _no_recall,
+        write_postmortem=lambda *a, **k: None,
     )
 
 
@@ -390,6 +397,44 @@ def test_g_reject_replans(worldstate: Path) -> None:
     assert resumed.get("__interrupt__")
     assert len(resumed["remediation_attempts"]) >= 1
     assert any("wrong deploy" in v.feedback for v in resumed["review_history"])
+
+
+# --- (h) memory recall injects hits + fast-path but never skips review/risk_gate --------
+def test_h_memory_recall_injects_without_skipping_review(
+    worldstate: Path, fake_actuator: list[tuple[str, dict[str, Any]]]
+) -> None:
+    service = f"shopapi-{uuid.uuid4().hex[:8]}"
+    alert = _alert(service)
+    seed_metric(worldstate, service, "dep_up", 1, dep="redis")
+    incident_id = _create_incident(alert)
+
+    def _recall(_a: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        hits = [
+            {
+                "memory_id": "m-1",
+                "title": "shopredis down before",
+                "content": "restart shopredis fixed it",
+                "similarity": 0.95,
+                "kind": "incident_pattern",
+            }
+        ]
+        fast_path = {
+            "memory_id": "m-1",
+            "previous_remediation": {"tool": "restart_service"},
+            "similarity": 0.95,
+        }
+        return hits, fast_path
+
+    final = _run(_make_deps(_happy_path_scripts(), recall=_recall), incident_id, alert)
+
+    inc = _incident(incident_id)
+    assert inc.status == "RESOLVED"
+    assert inc.memory_used is True and inc.fast_path is True
+    assert final["memory_hits"][0]["memory_id"] == "m-1"
+    assert final.get("fast_path_hint", {}).get("similarity") == 0.95
+    # fast path never skips review or the risk gate
+    assert len(final["review_history"]) >= 1
+    assert final["escalation"]["level"] == "NOTIFY"
 
 
 # --- (e) risk-gate levels for all five scenarios (pure, grouped with the graph suite) --

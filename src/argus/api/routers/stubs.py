@@ -16,21 +16,6 @@ def _todo(feature: str, milestone: str) -> NoReturn:
     raise HTTPException(status_code=501, detail=f"{feature} is implemented in {milestone}")
 
 
-@router.get("/memories")
-def list_memories(query: str | None = None, kind: str | None = None) -> Any:
-    _todo("memory browsing", "M07")
-
-
-@router.delete("/memories/{memory_id}")
-def delete_memory(memory_id: str) -> Any:
-    _todo("memory deletion", "M07")
-
-
-@router.post("/memories/consolidate")
-def consolidate_memories() -> Any:
-    _todo("memory consolidation", "M07")
-
-
 @router.get("/dashboard/summary")
 def dashboard_summary() -> Any:
     _todo("dashboard summary", "M09")

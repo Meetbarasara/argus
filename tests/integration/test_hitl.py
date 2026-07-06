@@ -89,6 +89,8 @@ def _deps(scripts: dict[str, list[str]]) -> GraphDeps:
         recovery_interval_s=0.0,
         recovery_deadline_s=1.0,
         recovery_sleep=lambda _s: None,
+        recall=lambda _a: ([], None),
+        write_postmortem=lambda *a, **k: None,
     )
 
 

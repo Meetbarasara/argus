@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from argus.api.routers import alerts, approvals, health, incidents, stubs
+from argus.api.routers import alerts, approvals, health, incidents, memories, stubs
 from argus.errors import ArgusError, PolicyError
 from argus.settings import get_settings
 
@@ -23,7 +23,15 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    for r in (health.router, alerts.router, incidents.router, approvals.router, stubs.router):
+    routers = (
+        health.router,
+        alerts.router,
+        incidents.router,
+        approvals.router,
+        memories.router,
+        stubs.router,
+    )
+    for r in routers:
         app.include_router(r, prefix="/api")
 
     @app.exception_handler(PolicyError)

@@ -181,3 +181,33 @@ def plan_summary(plan: InvestigationPlan | None) -> str:
     if plan is None:
         return ""
     return plan.rationale
+
+
+# --- memory writer (postmortem) ------------------------------------------------------
+def postmortem_messages(
+    alert: dict[str, Any],
+    root_cause: str,
+    affected_services: list[str],
+    remediation: dict[str, Any] | None,
+    recovery: dict[str, Any] | None,
+    human_note: str = "",
+) -> list[BaseMessage]:
+    system = SystemMessage(
+        content=(
+            "You are the incident memory-writer. Write a concise, reusable lesson (3-6 "
+            "sentences): symptom -> root cause -> fix, so a future responder recognizes this "
+            "fault faster. Pick kind: 'incident_pattern' for a recurring failure signature, "
+            "'lesson' for a general takeaway. Return JSON matching PostmortemMemory."
+        )
+    )
+    human = HumanMessage(
+        content=(
+            f"Alert: {_alert_summary(alert)}\n"
+            f"Root cause: {root_cause}\n"
+            f"Affected services: {affected_services}\n"
+            f"Remediation executed: {json.dumps(remediation, default=str)}\n"
+            f"Recovery: {json.dumps(recovery, default=str)}\n"
+            f"{human_note}"
+        )
+    )
+    return [system, human]
