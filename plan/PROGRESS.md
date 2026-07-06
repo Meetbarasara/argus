@@ -15,7 +15,7 @@
 | M05 | Graph v1 | done | ✅ 2026-07-06 (clean; verify 84) | ✅ 2026-07-06 verify (99) + graph 9/9 + live S1 RESOLVED/NOTIFY + live S3 WAITING_APPROVAL + integration 8/8 + world 7/8 (S1 flake, green standalone) | cb994aa+ | Autonomous S1 resolution live; S3 approval hold; specialists use real tools |
 | M06 | Human-in-the-loop | done | ✅ 2026-07-06 (clean; verify 99) | ✅ 2026-07-06 verify (104) + graph 11/11 + hitl 7/7 + live S3 approve→RESOLVED across a worker restart | f8d1312+ | Real interrupts; approve/reject/modify/takeover; durable pause |
 | M07 | Memory | done | ✅ 2026-07-06 (clean; verify 104) | ✅ 2026-07-06 verify (119) + graph 12/12 + memory 4/4 + live repeat 13→6 LLM calls (54% lift) | 03eb924+ | pgvector recall + postmortem + fast-path; memory-lift proven |
-| M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | (pending) | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
+| M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | 6906152 | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
 | M09 | Observability | todo | – | – | – | |
 | M10 | React UI | todo | – | – | – | |
 | M11 | Evaluation harness | todo | – | – | – | |
