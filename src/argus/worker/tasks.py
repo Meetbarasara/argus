@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 from celery.signals import worker_process_init
 from langgraph.types import Command
 from sqlalchemy import select
@@ -18,10 +19,20 @@ from argus.db.models import TERMINAL_STATUSES, Approval
 from argus.db.session import session_scope
 from argus.graph.runtime import get_compiled_graph
 from argus.graph.support import escalation_field, now_iso
+from argus.policy.risk_gate import load_policy
 from argus.repo import incidents as incident_repo
 from argus.worker.app import celery_app
 
 log = structlog.get_logger(__name__)
+
+# Task-level wall-clock backstop (M08): the graph already escalates to take_over at the
+# in-graph wall budget; these are the outer guardrails for a run that wedges *outside* the
+# budget guard (e.g. a hung provider call). soft raises SoftTimeLimitExceeded (catchable →
+# FAILED with a reason); hard kills the child as a last resort. acks_late (M02) means a
+# hard-killed task is redelivered, and the idempotency checks make the re-run safe.
+_MAX_WALL_S = int(load_policy().get("limits", {}).get("max_wall_seconds_per_incident", 420))
+_SOFT_TIME_LIMIT_S = _MAX_WALL_S + 60
+_HARD_TIME_LIMIT_S = _MAX_WALL_S + 120
 
 
 @worker_process_init.connect
@@ -44,6 +55,7 @@ def _initial_state(incident_id: str, alert: dict[str, Any]) -> dict[str, Any]:
         "service_catalog": {},
         "memory_hits": [],
         "findings": [],
+        "spec_llm_calls": [],
         "review_history": [],
         "remediation_attempts": [],
         "budget": {"llm_calls_used": 0, "started_at_iso": now_iso()},
@@ -103,7 +115,27 @@ def _fail(incident_id: str, exc: Exception) -> str:
     return "failed"
 
 
-@celery_app.task(name="argus.worker.tasks.run_incident")
+def _fail_timeout(incident_id: str) -> str:
+    """Soft time-limit hit (M08): the run outlived max_wall + 60s. Mark FAILED with a clear
+    reason rather than letting the generic handler label it a 'graph error'."""
+    log.warning("incident.soft_timeout", incident_id=incident_id, limit_s=_SOFT_TIME_LIMIT_S)
+    with session_scope() as session:
+        incident = incident_repo.get_incident(session, incident_id)
+        if incident is not None and incident.status not in TERMINAL_STATUSES:
+            incident_repo.transition(
+                session,
+                incident,
+                "FAILED",
+                status_reason=f"wall-clock limit exceeded ({_SOFT_TIME_LIMIT_S}s task soft limit)",
+            )
+    return "failed"
+
+
+@celery_app.task(
+    name="argus.worker.tasks.run_incident",
+    soft_time_limit=_SOFT_TIME_LIMIT_S,
+    time_limit=_HARD_TIME_LIMIT_S,
+)
 def run_incident(incident_id: str) -> str:
     with session_scope() as session:
         incident = incident_repo.get_incident(session, incident_id)
@@ -117,6 +149,8 @@ def run_incident(incident_id: str) -> str:
         result = get_compiled_graph().invoke(
             _initial_state(incident_id, alert), config=_config(incident_id)
         )
+    except SoftTimeLimitExceeded:
+        return _fail_timeout(incident_id)
     except Exception as exc:
         return _fail(incident_id, exc)
     status = _finalize(incident_id, result)
@@ -172,7 +206,11 @@ def _resume_payload(incident_id: str, approval_id: str | None) -> dict[str, Any]
         return {**base, "kind": "approval", "decision": "reject"}
 
 
-@celery_app.task(name="argus.worker.tasks.resume_incident")
+@celery_app.task(
+    name="argus.worker.tasks.resume_incident",
+    soft_time_limit=_SOFT_TIME_LIMIT_S,
+    time_limit=_HARD_TIME_LIMIT_S,
+)
 def resume_incident(incident_id: str, approval_id: str | None = None) -> str:
     # idempotency (08 #19): only a genuinely paused incident may resume
     with session_scope() as session:
@@ -191,6 +229,8 @@ def resume_incident(incident_id: str, approval_id: str | None = None) -> str:
     log.info("resume_incident.start", incident_id=incident_id, decision=payload.get("decision"))
     try:
         result = get_compiled_graph().invoke(Command(resume=payload), config=_config(incident_id))
+    except SoftTimeLimitExceeded:
+        return _fail_timeout(incident_id)
     except Exception as exc:
         return _fail(incident_id, exc)
     status = _finalize(incident_id, result)

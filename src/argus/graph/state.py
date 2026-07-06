@@ -10,7 +10,7 @@ from __future__ import annotations
 import operator
 from typing import Annotated, Any, NotRequired, TypedDict
 
-from argus.agents.schemas import Finding, Hypothesis, InvestigationPlan, ReviewVerdict
+from argus.agents.schemas import Finding, Hypothesis, InvestigationPlan, PlanStep, ReviewVerdict
 
 
 class MemoryHit(TypedDict):
@@ -28,7 +28,17 @@ class IncidentState(TypedDict):
     memory_hits: list[MemoryHit]  # [{memory_id, title, content, similarity, kind}]
     fast_path_hint: NotRequired[dict[str, Any]]  # {memory_id, previous_remediation, similarity}
     plan: NotRequired[InvestigationPlan]
+    # M08 fan-out: the single step a specialist runs, carried in via the Send payload. Only
+    # read by the specialist node; never written back to shared state (so no parallel clash).
+    current_step: NotRequired[PlanStep]
     findings: Annotated[list[Finding], operator.add]  # append reducer (parallel-safe)
+    # M08: specialist LLM-call counts, one entry per specialist invocation. A reducer channel
+    # so the parallel fan-out never writes the (non-reducer) budget dict concurrently; the
+    # budget guard folds sum(spec_llm_calls) into the running total (support.total_llm_calls).
+    spec_llm_calls: Annotated[list[int], operator.add]
+    # M08: len(findings) at the start of the current plan cycle (set by plan). Lets the join
+    # scope "this cycle's" findings for the next-wave and degradation checks across replans.
+    cycle_findings_baseline: NotRequired[int]
     hypothesis: NotRequired[Hypothesis]
     review_history: Annotated[list[ReviewVerdict], operator.add]
     escalation: NotRequired[dict[str, Any]]  # {level, rule_trace, approval_id}

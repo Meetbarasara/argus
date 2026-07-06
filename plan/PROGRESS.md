@@ -15,7 +15,7 @@
 | M05 | Graph v1 | done | ✅ 2026-07-06 (clean; verify 84) | ✅ 2026-07-06 verify (99) + graph 9/9 + live S1 RESOLVED/NOTIFY + live S3 WAITING_APPROVAL + integration 8/8 + world 7/8 (S1 flake, green standalone) | cb994aa+ | Autonomous S1 resolution live; S3 approval hold; specialists use real tools |
 | M06 | Human-in-the-loop | done | ✅ 2026-07-06 (clean; verify 99) | ✅ 2026-07-06 verify (104) + graph 11/11 + hitl 7/7 + live S3 approve→RESOLVED across a worker restart | f8d1312+ | Real interrupts; approve/reject/modify/takeover; durable pause |
 | M07 | Memory | done | ✅ 2026-07-06 (clean; verify 104) | ✅ 2026-07-06 verify (119) + graph 12/12 + memory 4/4 + live repeat 13→6 LLM calls (54% lift) | 03eb924+ | pgvector recall + postmortem + fast-path; memory-lift proven |
-| M08 | Parallelism & resilience | todo | – | – | – | |
+| M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | (pending) | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
 | M09 | Observability | todo | – | – | – | |
 | M10 | React UI | todo | – | – | – | |
 | M11 | Evaluation harness | todo | – | – | – | |
@@ -144,6 +144,44 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - **Only remaining M01 item: the automated 5-scenario world gate** (tester container:
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
+
+### M08 — 2026-07-06 (parallel specialists & resilience — DONE)
+- Specialists swapped from the M05 sequential chain to a **Send-API parallel fan-out**
+  (`graph/build.py`, `graph/fanout.py`): after `plan`, `_route_after_plan` dispatches one
+  `Send` per ready step (no unmet `depends_on`); the specialist nodes append findings
+  concurrently and converge on a new deterministic `gather` join, which dispatches a dependent
+  second wave (≤2 waves; plan caps at 5 steps) before `synthesize`. Interrupts stay strictly
+  post-join (08 #20). The M05 sequential chain is retained behind `PARALLEL_SPECIALISTS=false`
+  for the A/B latency demo.
+- **Budget** (04 §6): specialists no longer write the non-reducer `budget` dict (3 concurrent
+  writers = InvalidUpdateError); their calls land in a new `spec_llm_calls` reducer channel,
+  and `support.total_llm_calls` folds them into the running total — checked once before the
+  fan-out (after plan) and once after the join (gather), never per branch. Boundary unit-tested
+  (39 ok / 40 trips, incl. specialist calls). Specialist tool-call cap 4→6 (04 §4).
+- **Resilience**: the specialist node degrades any provider/tool/infra failure to a
+  confidence-0 finding (never a naked raise); `gather` escalates to take_over when >50% of a
+  cycle's findings failed ("investigation degraded"). Worker task `soft_time_limit`=max_wall+60s
+  (480s) → FAILED with a clear reason on expiry (hard 540s). `FakeLLM` made thread-safe
+  (per-role bound view + lock — specialists now run on LangGraph's thread pool) + optional
+  scripted tool_calls to drive the tool loop in tests.
+- Host `uv run poe verify` green — **133 unit** (+14: budget-guard boundary + fan-out wave/
+  degradation logic). `uv run poe test-graph` **19** (12 M05/M06/M07 unchanged + 7 M08).
+- **Chaos (a–e)** green (FakeLLM + monkeypatched tools): (a) a tool raising twice → conf-0
+  finding → synthesize plans around it → RESOLVED; (b) one specialist's provider giving up →
+  1 degraded finding, still RESOLVED; (c) 2/3 degraded → TAKEN_OVER; (d) budget trip →
+  TAKEN_OVER; (e) 3 independent steps → all 3 findings present (reducer, no loss). Plus a
+  sequential-fallback resolve and a deterministic span-overlap parallelism proof.
+- **Live parallelism proof (record):** inject S1 → incident `d8b216b6`, 33 spans
+  ({node:10, llm:16, tool:7}). `node.log_analyst` [45.316–47.192] and `node.metrics_analyst`
+  [45.306–47.508] **overlap 1.876s** (parallel wave 1); `node.change_analyst` [47.523–49.565]
+  ran in the dependency-driven wave 2 — proving both fan-out and the 2-wave join live. Gemini
+  free-tier daily quota was exhausted (429), so supervisor/reviewer were routed to Groq via
+  `ARGUS_MODEL__*` for this run; the weaker supervisor's low-confidence hypothesis correctly
+  escalated to TAKE_OVER — autonomous S1 resolution stays proven at M05/M07 + the graph tier.
+- Integration (tester): `-m integration` green with an idle worker; `test_platform` 4/4
+  standalone (a busy worker + the exhausted Gemini quota backs the queue up past the webhook's
+  30s deadline — a timing flake, not an M08 regression). `-m world` **8/8** (worker paused,
+  622s); the S1 M01 flake did not recur.
 
 ### M07 — 2026-07-06 (memory — write, recall, fast-path, management)
 - `src/argus/memory/`: `embedder` (fastembed bge-small-en-v1.5, 384-d, lazy + baked into
@@ -315,6 +353,10 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-06 | M07 consolidation merge is deterministic (combine titles/contents + union fingerprints), not an LLM-merge | Consolidation is a maintenance op; deterministic merge is reliable + testable and spends no LLM quota on housekeeping | Originals still superseded_by the merged memory (acceptance met) |
 | 2026-07-06 | recall/write_postmortem injected via GraphDeps (defaults = real memory fns); postmortem's memory_writer call is not billed to the investigation budget | Keeps host graph tests embedder-free; llm_calls counts investigation calls consistently across runs (matters for the memory-lift comparison) | test_memory drives the graph in-process with the real memory fns + PostgresSaver |
 | 2026-07-06 | Live memory-lift used a prior clean S1 run (ecedf03b, 13 calls, no memory) as run A rather than re-running | It was already a valid clean baseline that wrote the seed memory; run B (6 calls) recalled it — both S1, memory ON | Saved one full live run; 54% lift recorded |
+| 2026-07-06 | M08: parallel specialists count LLM calls in a new `spec_llm_calls: Annotated[list[int], operator.add]` channel folded into the total by `support.total_llm_calls` (not the milestone's "router callback"); added `current_step` (Send-payload carrier) + `cycle_findings_baseline` (replan-safe wave scoping) state keys | `budget` is a plain non-reducer dict — three concurrent specialists writing it = InvalidUpdateError; a reducer counter is the plan/prompt-endorsed alternative and 04 §6 budget *values* are unchanged | Additive transient state keys; no divergence from 04 §2 named shape |
+| 2026-07-06 | M08: `counter_rollup` reports `llm_calls` from the authoritative DB row count (was `budget.llm_calls_used or count`) | specialists no longer bill `budget.llm_calls_used`, so the logged-row count is the accurate total incl. specialists; keeps the M07 memory-lift metric correct | Reporting only; the guard stays state-based (test_d seeds budget in state) |
+| 2026-07-06 | M08 introduces a `gather` join node (not named in 04 §1) between the specialist fan-out and synthesize | The Send API needs a single fan-in anchor for the post-wave budget re-check, the >50%-degraded escalation, and the dependent-wave dispatch; per-branch checks would race/duplicate | Deterministic control-only node (no LLM, no status write); 04 §1 behaviour contract preserved |
+| 2026-07-06 | M08 live parallelism proof routed supervisor+reviewer to Groq via `ARGUS_MODEL__*` env overrides for one S1 run | Gemini free-tier daily request quota was exhausted (429 RESOURCE_EXHAUSTED); the span-overlap property is provider-independent (specialists are Groq either way) | Live proof only; in-repo `models.yaml`/roles unchanged and `.env` overrides reverted after; autonomous resolution proven at M05/M07 |
 
 ## Environment facts (fill during build)
 

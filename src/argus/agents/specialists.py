@@ -28,7 +28,7 @@ from argus.tools.registry import ToolContext, ToolExecutor
 
 log = structlog.get_logger(__name__)
 
-MAX_TOOL_CALLS = 4  # per step (6 after M08)
+MAX_TOOL_CALLS = 6  # per step (04 §4: was 4 pre-M08)
 
 
 def _invoke_tool(tools_by_name: dict[str, StructuredTool], call: Mapping[str, Any]) -> str:

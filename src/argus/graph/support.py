@@ -32,15 +32,27 @@ def read_trace_id(incident_id: str) -> str:
 
 # --- budget --------------------------------------------------------------------------
 def bump_budget(state: dict[str, Any], n_llm_calls: int) -> dict[str, Any]:
+    """Bill single-node LLM calls (plan/synthesize/review) to the budget dict. The parallel
+    specialists must NOT call this — they'd write the non-reducer ``budget`` channel
+    concurrently (InvalidUpdateError); their calls land in ``spec_llm_calls`` instead."""
     budget = dict(state.get("budget") or {})
     budget["llm_calls_used"] = int(budget.get("llm_calls_used", 0)) + n_llm_calls
     return budget
 
 
+def total_llm_calls(state: dict[str, Any]) -> int:
+    """Effective LLM calls so far = single-node calls (budget.llm_calls_used) + the parallel
+    specialists' calls (spec_llm_calls reducer). Each source writes exactly one place, so this
+    never double-counts across the review-revise loop or a replan (M08)."""
+    budget = state.get("budget") or {}
+    spec = sum(int(n) for n in state.get("spec_llm_calls", []))
+    return int(budget.get("llm_calls_used", 0)) + spec
+
+
 def budget_breach_reason(state: dict[str, Any], policy: dict[str, Any]) -> str | None:
     limits = policy.get("limits", {})
     budget = state.get("budget") or {}
-    used = int(budget.get("llm_calls_used", 0))
+    used = total_llm_calls(state)
     max_calls = int(limits.get("max_llm_calls_per_incident", 40))
     if used >= max_calls:
         return f"LLM call budget exhausted ({used}/{max_calls})"
@@ -74,7 +86,10 @@ def counter_rollup(session: Session, incident_id: str, budget: dict[str, Any]) -
         select(func.count(ToolCall.id)).where(ToolCall.incident_id == incident_id)
     ).scalar_one()
     return {
-        "llm_calls": int((budget or {}).get("llm_calls_used", 0) or count),
+        # prefer the authoritative row count — it includes the parallel specialists' calls,
+        # which no longer flow through budget.llm_calls_used (M08); fall back to budget only
+        # when nothing was logged (e.g. a run with zero provider calls).
+        "llm_calls": int(count or (budget or {}).get("llm_calls_used", 0)),
         "tokens_in": int(t_in),
         "tokens_out": int(t_out),
         "cost_usd": cost,

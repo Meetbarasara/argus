@@ -1,11 +1,22 @@
-"""Compile the incident-response graph (04 §1 topology). M05 wires the specialists as a
-sequential chain (M08 swaps in the Send-API fan-out); everything else matches the diagram.
+"""Compile the incident-response graph (04 §1 topology).
 
-Two cross-cutting concerns are handled here so the nodes stay thin:
-  * every LLM node gets a pre-node budget guard — on breach it short-circuits and the
-    following conditional edge routes to take_over (04 edge table);
-  * all conditional routing (review verdict, risk level, recovery outcome) lives in the
-    pure router functions below, keyed off state the nodes already wrote.
+Specialist execution has two shapes behind ``deps.parallel_specialists`` (04 §1: "M05 runs
+D1–D3 sequentially; M08 switches to parallel fan-out with the Send API and a joining
+reducer"):
+
+* parallel (default) — ``plan`` dispatches one ``Send`` per ready step; the specialist nodes
+  append findings concurrently and converge on the ``gather`` join, which dispatches a second
+  wave for any dependent steps before flowing to ``synthesize`` (08 #20: interrupts stay
+  strictly *after* the join, never inside the fan-out);
+* sequential — the M05 chain, kept for the A/B latency demo, converging on the same join.
+
+Two cross-cutting concerns stay here so the nodes remain thin:
+  * every single (non-fanned-out) LLM node gets a pre-node budget guard — on breach it
+    short-circuits and the following conditional edge routes to take_over (04 edge table);
+  * all conditional routing (fan-out waves, review verdict, risk level, recovery outcome)
+    lives in the pure router functions below, keyed off state the nodes already wrote. In the
+    parallel path the budget/degradation checks happen once before the fan-out (after plan)
+    and once after the join (gather), never per parallel branch.
 """
 
 from __future__ import annotations
@@ -14,10 +25,13 @@ from collections.abc import Callable
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 
+from argus.graph import fanout
 from argus.graph.deps import GraphDeps
 from argus.graph.nodes import (
     close,
+    gather,
     human_approval,
     intake,
     plan,
@@ -36,6 +50,8 @@ from argus.graph.verify import verify_recovery
 
 NodeFn = Callable[[dict[str, Any], GraphDeps], dict[str, Any]]
 Runnable = Callable[[dict[str, Any]], dict[str, Any]]
+
+SPECIALISTS = ("log_analyst", "metrics_analyst", "change_analyst")
 
 
 def _plain(fn: NodeFn, deps: GraphDeps) -> Runnable:
@@ -58,18 +74,52 @@ def _guarded(fn: NodeFn, deps: GraphDeps) -> Runnable:
 
 
 # --- conditional routers -------------------------------------------------------------
+def _breached(state: dict[str, Any]) -> bool:
+    return bool((state.get("budget") or {}).get("breached"))
+
+
 def _route_budget(next_node: str) -> Callable[[dict[str, Any]], str]:
     def route(state: dict[str, Any]) -> str:
-        return "take_over" if (state.get("budget") or {}).get("breached") else next_node
+        return "take_over" if _breached(state) else next_node
 
     return route
+
+
+def _fan_out(state: dict[str, Any]) -> list[Send]:
+    """One Send per ready step; the specialist reads its step from ``current_step``."""
+    return [
+        Send(step.specialist, {**state, "current_step": step})
+        for step in fanout.remaining_steps(state)
+    ]
+
+
+def _route_after_plan(state: dict[str, Any]) -> Any:
+    """plan → fan out the first wave (steps with no unmet depends_on), or take_over on breach."""
+    if _breached(state):  # plan's guard short-circuited, or plan's own call tipped the budget
+        return "take_over"
+    sends = _fan_out(state)
+    # plan schema guarantees ≥1 step and a plan with a root, so a wave is always non-empty;
+    # fall through to synthesize defensively rather than emit an empty Send list.
+    return sends or "synthesize"
+
+
+def _route_after_gather(state: dict[str, Any]) -> Any:
+    """Join → next dependent wave, else take_over (breach/degraded), else synthesize."""
+    if _breached(state):
+        return "take_over"
+    sends = _fan_out(state)
+    if sends:
+        return sends
+    if fanout.investigation_degraded(state):
+        return "take_over"
+    return "synthesize"
 
 
 def _route_review(deps: GraphDeps) -> Callable[[dict[str, Any]], str]:
     max_loops = int(deps.policy["limits"]["max_review_loops"])
 
     def route(state: dict[str, Any]) -> str:
-        if (state.get("budget") or {}).get("breached"):
+        if _breached(state):
             return "take_over"
         history = state.get("review_history", [])
         if not history:
@@ -119,9 +169,7 @@ def build_graph(deps: GraphDeps, checkpointer: Any) -> Any:
     graph.add_node("intake", _plain(intake.intake, deps))
     graph.add_node("recall_memory", _plain(recall.recall_memory, deps))
     graph.add_node("plan", _guarded(plan.plan, deps))
-    graph.add_node("log_analyst", _guarded(specialists.log_analyst, deps))
-    graph.add_node("metrics_analyst", _guarded(specialists.metrics_analyst, deps))
-    graph.add_node("change_analyst", _guarded(specialists.change_analyst, deps))
+    graph.add_node("gather", _plain(gather.gather, deps))
     graph.add_node("synthesize", _guarded(synthesize.synthesize, deps))
     graph.add_node("review", _guarded(review.review, deps))
     graph.add_node("risk_gate", _plain(risk_gate.risk_gate, deps))
@@ -136,17 +184,33 @@ def build_graph(deps: GraphDeps, checkpointer: Any) -> Any:
     graph.add_edge("intake", "recall_memory")
     graph.add_edge("recall_memory", "plan")
 
-    # sequential specialist chain, each fronted by the budget guard's routing
-    graph.add_conditional_edges("plan", _route_budget("log_analyst"), ["take_over", "log_analyst"])
-    graph.add_conditional_edges(
-        "log_analyst", _route_budget("metrics_analyst"), ["take_over", "metrics_analyst"]
-    )
-    graph.add_conditional_edges(
-        "metrics_analyst", _route_budget("change_analyst"), ["take_over", "change_analyst"]
-    )
-    graph.add_conditional_edges(
-        "change_analyst", _route_budget("synthesize"), ["take_over", "synthesize"]
-    )
+    # the fan-out join is shared by both modes; a Send target list covers the dynamic edges
+    gather_ends = ["take_over", "synthesize", *SPECIALISTS]
+    if deps.parallel_specialists:
+        for name in SPECIALISTS:
+            graph.add_node(name, _plain(getattr(specialists, name), deps))
+            graph.add_edge(name, "gather")
+        graph.add_conditional_edges("plan", _route_after_plan, gather_ends)
+        graph.add_conditional_edges("gather", _route_after_gather, gather_ends)
+    else:
+        # sequential chain (PARALLEL_SPECIALISTS=false): each specialist runs all its steps,
+        # fronted by the budget guard's routing, converging on the same gather join.
+        for name in SPECIALISTS:
+            graph.add_node(name, _guarded(getattr(specialists, name), deps))
+        graph.add_conditional_edges(
+            "plan", _route_budget("log_analyst"), ["take_over", "log_analyst"]
+        )
+        graph.add_conditional_edges(
+            "log_analyst", _route_budget("metrics_analyst"), ["take_over", "metrics_analyst"]
+        )
+        graph.add_conditional_edges(
+            "metrics_analyst", _route_budget("change_analyst"), ["take_over", "change_analyst"]
+        )
+        graph.add_conditional_edges(
+            "change_analyst", _route_budget("gather"), ["take_over", "gather"]
+        )
+        graph.add_conditional_edges("gather", _route_after_gather, gather_ends)
+
     graph.add_conditional_edges("synthesize", _route_budget("review"), ["take_over", "review"])
     graph.add_conditional_edges(
         "review", _route_review(deps), ["take_over", "synthesize", "risk_gate"]

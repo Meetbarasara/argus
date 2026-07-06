@@ -25,4 +25,11 @@ def plan(state: dict[str, Any], deps: Any) -> dict[str, Any]:
             parent_span_id=sp.span_id,
         )
         sp.set(steps=len(investigation_plan.steps))
-    return {"plan": investigation_plan, "budget": bump_budget(state, 1)}
+    # record where this cycle's findings begin so the fan-out join (M08) can scope wave and
+    # degradation checks to the current plan, not evidence carried over from a prior replan.
+    baseline = len(state.get("findings", []))
+    return {
+        "plan": investigation_plan,
+        "cycle_findings_baseline": baseline,
+        "budget": bump_budget(state, 1),
+    }

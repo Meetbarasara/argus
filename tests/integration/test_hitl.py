@@ -109,6 +109,7 @@ def _initial(incident_id: str, alert: dict[str, Any]) -> dict[str, Any]:
         "service_catalog": {},
         "memory_hits": [],
         "findings": [],
+        "spec_llm_calls": [],
         "review_history": [],
         "remediation_attempts": [],
         "budget": {"llm_calls_used": 0, "started_at_iso": datetime.now(UTC).isoformat()},
