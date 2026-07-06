@@ -12,7 +12,7 @@
 | M02 | Platform core | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (54) + integration 4/4 + gate curl | 588e878+ | Alert→incident→worker pipe live; full schema migrated |
 | M03 | LLM layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (74) + integration 4/4 + live smoke 7/7 roles | a552414+ | Router/limits/retry/record-replay; real Gemini+Groq verified |
 | M04 | Tool layer | done | ✅ 2026-07-05 | ✅ 2026-07-05 poe verify (84) + tool-world 3/3 + all 9 tools logged | 496747e+ | 9 tools, permission-enforced, evidence verified vs live world |
-| M05 | Graph v1 | done | ✅ 2026-07-06 (clean; verify 84) | ✅ 2026-07-06 verify (99) + graph 9/9 + live S1 RESOLVED/NOTIFY + live S3 WAITING_APPROVAL + integration 8/8 + world 7/8 (S1 flake, green standalone) | (pending) | Autonomous S1 resolution live; S3 approval hold; specialists use real tools |
+| M05 | Graph v1 | done | ✅ 2026-07-06 (clean; verify 84) | ✅ 2026-07-06 verify (99) + graph 9/9 + live S1 RESOLVED/NOTIFY + live S3 WAITING_APPROVAL + integration 8/8 + world 7/8 (S1 flake, green standalone) | cb994aa+ | Autonomous S1 resolution live; S3 approval hold; specialists use real tools |
 | M06 | Human-in-the-loop | todo | – | – | – | |
 | M07 | Memory | todo | – | – | – | |
 | M08 | Parallelism & resilience | todo | – | – | – | |
