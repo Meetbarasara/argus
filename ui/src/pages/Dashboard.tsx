@@ -1,0 +1,121 @@
+import { FlaskConical } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import type { ReactNode } from "react";
+import { EmptyState, ErrorNote, PageHeader, Spinner } from "../components/ui";
+import { StatusChip } from "../components/StatusChip";
+import { money, pct, seconds } from "../lib/format";
+import { useDashboard } from "../queries";
+
+const TOOLTIP = {
+  contentStyle: {
+    background: "#0f1420",
+    border: "1px solid #273248",
+    borderRadius: 8,
+    fontSize: 12,
+  },
+  labelStyle: { color: "#cbd5e1" },
+};
+
+function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) {
+  return (
+    <div className="card p-4">
+      <div className="text-xs uppercase tracking-wide text-ink-500">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums text-ink-100">{value}</div>
+      {sub && <div className="text-xs text-ink-500">{sub}</div>}
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const { data, isLoading, error } = useDashboard();
+
+  return (
+    <div>
+      <PageHeader title="Dashboard" subtitle="System health, cost, and outcomes" />
+      <div className="space-y-6 p-6">
+        {error && <ErrorNote error={error} />}
+        {isLoading && !data && <Spinner label="Crunching aggregates…" />}
+        {data && (
+          <>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+              <Stat label="Incidents" value={data.total_incidents} />
+              <Stat label="Resolution rate" value={pct(data.resolution_rate)} sub="resolved / total" />
+              <Stat label="Escalation rate" value={pct(data.escalation_rate)} sub="needed a human" />
+              <Stat label="Median MTTR" value={seconds(data.median_mttr_s ?? null)} sub={`avg ${seconds(data.avg_mttr_s ?? null)}`} />
+              <Stat label="Total cost" value={money(data.total_cost_usd)} sub={`${(data.total_tokens_in + data.total_tokens_out).toLocaleString()} tok`} />
+            </div>
+
+            <div className="card p-4">
+              <div className="mb-3 text-xs uppercase tracking-wide text-ink-500">Incidents by status</div>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(data.incidents_by_status)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([status, count]) => (
+                    <div key={status} className="flex items-center gap-1.5">
+                      <StatusChip status={status} />
+                      <span className="text-sm tabular-nums text-ink-300">{count}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="card p-4">
+                <div className="mb-2 text-xs uppercase tracking-wide text-ink-500">
+                  Cost per incident (last 20)
+                </div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={data.cost_per_incident.map((c) => ({ ...c, usd: c.cost_usd }))}>
+                    <CartesianGrid stroke="#1b2333" vertical={false} />
+                    <XAxis dataKey="service" hide />
+                    <YAxis tick={{ fill: "#64748b", fontSize: 11 }} width={48} tickFormatter={(v) => `$${v}`} />
+                    <Tooltip {...TOOLTIP} formatter={(v: any) => money(Number(v))} />
+                    <Bar dataKey="usd" radius={[3, 3, 0, 0]}>
+                      {data.cost_per_incident.map((c) => (
+                        <Cell key={c.incident_id} fill={c.status === "RESOLVED" ? "#34d399" : "#5b9bff"} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="card p-4">
+                <div className="mb-2 text-xs uppercase tracking-wide text-ink-500">Tokens by role</div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={data.cost_by_role}>
+                    <CartesianGrid stroke="#1b2333" vertical={false} />
+                    <XAxis dataKey="role" tick={{ fill: "#64748b", fontSize: 10 }} angle={-20} textAnchor="end" height={50} interval={0} />
+                    <YAxis tick={{ fill: "#64748b", fontSize: 11 }} width={40} />
+                    <Tooltip {...TOOLTIP} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="tokens_in" stackId="t" fill="#5b9bff" name="in" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="tokens_out" stackId="t" fill="#8b5cf6" name="out" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="card p-4">
+              <div className="mb-2 text-xs uppercase tracking-wide text-ink-500">Evaluation</div>
+              <EmptyState
+                icon={<FlaskConical className="h-7 w-7" />}
+                title="No eval runs yet"
+                hint="The evaluation harness (M11) will populate suite scores, per-case PASS/PARTIAL/FAIL, and the memory-lift ablation here."
+              />
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

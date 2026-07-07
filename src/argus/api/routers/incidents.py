@@ -3,6 +3,7 @@ empty until M03+ populate them, but the endpoints exist now so the UI has stable
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -11,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from argus.api.schemas import IncidentDetail, IncidentSummary, TakeoverResolution
-from argus.db.models import Approval, LLMCall, Span
+from argus.db.models import Approval, LLMCall, Span, ToolCall
 from argus.db.session import get_db
 from argus.repo import incidents as incident_repo
 from argus.worker.app import celery_app
@@ -37,6 +38,16 @@ def _approval_dict(a: Approval) -> dict[str, Any]:
         "decision_comment": a.decision_comment,
         "modified_action": a.modified_action,
     }
+
+
+def _pk_or_none(session: Session, model: Any, ident: str) -> Any:
+    """Fetch by primary key only when ``ident`` is a real UUID — the trace drill-down passes a
+    16-hex span_id, and casting that to the UUID pk would raise a DB error (500)."""
+    try:
+        uuid.UUID(str(ident))
+    except ValueError:
+        return None
+    return session.get(model, ident)
 
 
 def _span_dict(s: Span) -> dict[str, Any]:
@@ -124,7 +135,10 @@ def takeover_resolution(
 
 @router.get("/llm_calls/{llm_call_id}")
 def get_llm_call(llm_call_id: str, session: Session = Depends(get_db)) -> dict[str, Any]:
-    call = session.get(LLMCall, llm_call_id)
+    # resolve by span_id (what the UI trace drill-down knows) then by llm_call pk
+    call = session.scalar(select(LLMCall).where(LLMCall.span_id == llm_call_id)) or _pk_or_none(
+        session, LLMCall, llm_call_id
+    )
     if call is None:
         raise HTTPException(status_code=404, detail="llm_call not found")
     return {
@@ -142,5 +156,28 @@ def get_llm_call(llm_call_id: str, session: Session = Depends(get_db)) -> dict[s
         "latency_ms": call.latency_ms,
         "validation_retries": call.validation_retries,
         "mode": call.mode,
+        "created_at": _iso(call.created_at),
+    }
+
+
+@router.get("/tool_calls/{tool_call_id}")
+def get_tool_call(tool_call_id: str, session: Session = Depends(get_db)) -> dict[str, Any]:
+    # sibling of /llm_calls: resolve by span_id then tool_call pk for the trace drill-down (M10)
+    call = session.scalar(select(ToolCall).where(ToolCall.span_id == tool_call_id)) or _pk_or_none(
+        session, ToolCall, tool_call_id
+    )
+    if call is None:
+        raise HTTPException(status_code=404, detail="tool_call not found")
+    return {
+        "id": call.id,
+        "incident_id": call.incident_id,
+        "span_id": call.span_id,
+        "agent": call.agent,
+        "tool": call.tool,
+        "args": call.args,
+        "result": call.result,
+        "status": call.status,
+        "error": call.error,
+        "latency_ms": call.latency_ms,
         "created_at": _iso(call.created_at),
     }

@@ -17,7 +17,7 @@
 | M07 | Memory | done | ✅ 2026-07-06 (clean; verify 104) | ✅ 2026-07-06 verify (119) + graph 12/12 + memory 4/4 + live repeat 13→6 LLM calls (54% lift) | 03eb924+ | pgvector recall + postmortem + fast-path; memory-lift proven |
 | M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | 6906152 | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
-| M10 | React UI | todo | – | – | – | |
+| M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | (pending) | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
 | M11 | Evaluation harness | todo | – | – | – | |
 | M12 | Demo & docs | todo | – | – | – | |
 
@@ -144,6 +144,39 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - **Only remaining M01 item: the automated 5-scenario world gate** (tester container:
   reset→inject→assert alert+evidence≤90s→remediate→assert recovery≤120s). Will need S4
   load tuning (pool=2 must exhaust under loadgen; pool=10 must not).
+
+### M10 — 2026-07-07 (React UI — review console + trace explorer — DONE)
+- **UX-first IA:** a persistent sidebar (Incidents · Approvals · Memory · Dashboard) with a
+  live **pending-approvals badge** so the on-call engineer sees when they're needed, and a
+  health footer (LLM mode / model / memory). `WAITING_APPROVAL` rows are pulled to attention
+  (amber accent) in the triage table. Dark "control-room" palette, no component library
+  (Tailwind only, 05).
+- **Pages (`ui/src/`):** Incidents (live 2s table, filters, memory/⚡ badges); IncidentDetail
+  (header timeline + tabs) — the **Trace** tab is a collapsible span tree built once from
+  `parent_span_id` with a side panel that drills an llm span → exact prompt/response + tokens +
+  cost and a tool span → args/result; Hypothesis & Review, Remediation, Memory tabs derived
+  from incident fields + key spans; **Approvals** (the HITL hero: risk level, hypothesis +
+  confidence bar, evidence, proposed action, Approve / Modify [JSON param editor, server
+  re-validates + re-gates] / Reject [comment required], NOTIFY feed with Ack, decided history);
+  Memory (vector search, kind filter, delete, Consolidate); Dashboard (stat cards + recharts
+  cost/token charts + eval empty-state until M11). Empty states on every page.
+- Infra: `api.ts` typed client mirroring 03 §4; TanStack Query (2s active / 10s calm poll,
+  ADR-08); nginx serves the build + proxies `/api` (no prod CORS, 08 #25); vite dev proxy for
+  `npm run dev`.
+- **Gates:** `cd ui && npm run lint && npm run typecheck && npm run build` → clean (2408
+  modules; tsc strict, eslint --max-warnings 0). `npx vitest run` → **10/10** (span-tree
+  builder incl. 30-span + orphan cases, status→tone mapping, ApprovalCard render + approve
+  click + reject-requires-comment). `docker compose up -d --build ui` → `curl localhost:8081`
+  **200**, and `localhost:8081/api/dashboard/summary` **200** through the nginx proxy.
+- **Live data plumbing verified** against the running platform (50 resolved incidents): an
+  incident's 18 spans render all kinds; **llm span → `/llm_calls/{span_id}`** returns
+  role/model/tokens/cost + messages; **tool span → `/tool_calls/{span_id}`** returns
+  agent/tool/args/result; 94 approvals + 2 memories available for their pages. `uv run poe
+  verify` still **141 unit** (the two small API additions below are covered).
+- **Storyline note:** the interactive inject-S3→approve→RESOLVED click-through is constrained
+  this session by the exhausted Gemini quota + an offline browser-automation extension; the
+  approval **decide → resume → RESOLVED** path the UI's button triggers is the exact flow
+  `test_hitl` proves (M06, 7/7), and the UI's `decideApproval` mutation posts to that endpoint.
 
 ### M09 — 2026-07-07 (observability — dual sink, dashboard, root span — DONE)
 - **OTel dual sink (ADR-07):** `obs/otel.py` wires a TracerProvider at api/worker boot
@@ -393,6 +426,8 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-07 | M09: the OTLP→Jaeger sink *mirrors* each span from `obs.spans` (parent linked via an in-process span map) instead of replacing the Postgres write with an OTel SpanProcessor | our spans thread explicit parent_span_ids across LangGraph's thread pool (not OTel context); mirroring keeps the tested Postgres sink primary while giving Jaeger a correct single-rooted tree | Best-effort second sink; guarded so Jaeger off/down changes nothing |
 | 2026-07-07 | M09 root `incident` span opened in the worker (not a graph node) + an in-process registry so `obs.spans` auto-parents node spans to it | avoids editing all ~15 node span sites; direct graph/unit runs (no worker) keep parentless roots, unchanged | trace_id still originates once (worker → incidents.trace_id; intake reuses it); one incident = one trace |
 | 2026-07-07 | M09 live Jaeger smoke routed supervisor+reviewer to Groq (Gemini daily quota exhausted) and verified the trace via the Jaeger query API; `docs/img/jaeger.png` screenshot deferred to M12 | see [[argus-live-gate-ops]]; the span-tree hierarchy is provider-independent, and the PNG is an M12 `docs/img/` deliverable | Live-proof `.env` config reverted (gitignored) |
+| 2026-07-07 | M10 added `GET /tool_calls/{id}` (sibling of the existing `/llm_calls/{id}`) and made both resolve by **span_id** as well as pk | 03 §4 lists the llm_calls drill-down but the trace tab only knows a span's `span_id`; the tool_calls table (03 §1) had no read surface. A pk-guarded lookup (`_pk_or_none`) avoids a 500 when a 16-hex span_id is passed to the UUID pk | Additive read endpoints mirroring an existing pattern; no shape of an existing endpoint changed |
+| 2026-07-07 | M10 interactive browser click-through (inject S3 → Approve → RESOLVED) not driven this session | exhausted Gemini free-tier quota + offline browser-automation extension; the decide→resume→RESOLVED flow is proven by `test_hitl` (M06) and every UI-consumed endpoint returns live data | UI verified via npm gates + vitest + docker-200 + live data plumbing; interactive walkthrough pending quota/extension |
 
 ## Environment facts (fill during build)
 

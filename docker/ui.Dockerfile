@@ -1,4 +1,12 @@
-# Placeholder until M10 builds the real React app.
+# Build the React SPA, then serve the static bundle with nginx (which also proxies
+# /api → api:8080 so the browser needs no CORS in prod — 08 #25). Build context is repo root.
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY ui/package.json ./
+RUN npm install
+COPY ui/ ./
+RUN npm run build
+
 FROM nginx:alpine
-RUN printf '%s' '<!doctype html><title>Argus</title><h1>Argus UI placeholder (arrives at M10)</h1>' \
-    > /usr/share/nginx/html/index.html
+COPY ui/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
