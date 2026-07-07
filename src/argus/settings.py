@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     groq_api_key: str = ""
     llm_mode: Literal["live", "record", "replay", "fake"] = "live"
+    # Opt-in fallback: on a rate-limit/quota error the router retries the call on this model
+    # (``provider:model``), e.g. ``groq:llama-3.3-70b-versatile`` so a Gemini free-tier
+    # exhaustion doesn't halt testing. Empty = off (default; no behaviour change).
+    llm_fallback: str = ""
 
     # Behavior toggles
     auto_approve: Literal["off", "policy_sim"] = "off"

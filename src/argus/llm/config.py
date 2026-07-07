@@ -22,6 +22,12 @@ class RoleModel:
     env_key: str
 
 
+def load_providers(path: str = MODELS_YAML) -> dict[str, dict]:
+    """The ``providers`` block of models.yaml ({name: {env_key, rpm}}) — used to resolve the
+    opt-in fallback model's api key + rate limit."""
+    return dict(yaml.safe_load(Path(path).read_text(encoding="utf-8"))["providers"])
+
+
 def load_model_config(path: str = MODELS_YAML) -> dict[str, RoleModel]:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     providers = data["providers"]

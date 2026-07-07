@@ -12,13 +12,14 @@ import time
 from typing import Any
 
 import redis
+import structlog
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, ValidationError
 
 from argus.db.session import session_scope
 from argus.errors import LLMReplayMissError, LLMValidationError
 from argus.llm import costs, parsing, recorder
-from argus.llm.config import RoleModel, load_model_config
+from argus.llm.config import RoleModel, load_model_config, load_providers
 from argus.llm.fake import FakeLLM, load_fake_from_scripts
 from argus.llm.logging import write_llm_call
 from argus.llm.providers import build_chat_model
@@ -26,7 +27,50 @@ from argus.llm.ratelimit import acquire
 from argus.obs.spans import span
 from argus.settings import get_settings
 
+log = structlog.get_logger(__name__)
+
 MAX_VALIDATION_RETRIES = 2
+_RATE_LIMIT_MARKERS = (
+    "429",
+    "resource_exhausted",
+    "rate limit",
+    "ratelimit",
+    "quota",
+    "too many requests",
+)
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """Heuristic across providers: Gemini raises RESOURCE_EXHAUSTED/429, Groq raises rate-limit
+    errors — both surface these markers in the message."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _RATE_LIMIT_MARKERS)
+
+
+class _FallbackModel:
+    """Wraps a live chat model so a rate-limited/quota-exhausted primary call transparently
+    retries on a fallback model (M-testing convenience: Gemini free-tier exhausted → Groq).
+    Non-rate-limit errors propagate unchanged. Tokens come from whichever model responds; on
+    the rare fallback path cost + the logged model name still reflect the primary."""
+
+    def __init__(self, primary: Any, fallback: Any) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    def _wrap(self, model: Any, tools: Any) -> Any:
+        return model.bind_tools(tools) if hasattr(model, "bind_tools") else model
+
+    def bind_tools(self, tools: Any) -> _FallbackModel:
+        return _FallbackModel(self._wrap(self._primary, tools), self._wrap(self._fallback, tools))
+
+    def invoke(self, messages: Any) -> Any:
+        try:
+            return self._primary.invoke(messages)
+        except Exception as exc:
+            if not _is_rate_limited(exc):
+                raise
+            log.warning("llm.fallback", error=str(exc)[:140])
+            return self._fallback.invoke(messages)
 
 
 def _to_dicts(messages: list[BaseMessage]) -> list[dict[str, Any]]:
@@ -45,6 +89,8 @@ class LLMRouter:
         self.prices = costs.load_prices()
         self._redis = redis.Redis.from_url(settings.redis_url)
         self._models: dict[str, Any] = {}
+        self._providers = load_providers()
+        self._fb_model: Any = None  # lazily-built fallback chat model (shared across roles)
         if fake is not None:
             self.fake: FakeLLM | None = fake
         elif self.mode == "fake":
@@ -55,11 +101,28 @@ class LLMRouter:
     def _model_for(self, role: str) -> Any:
         if self.fake is not None:
             return self.fake.for_role(role)
+        rm = self.config[role]
         if role not in self._models:
-            rm = self.config[role]
             api_key = get_settings().api_key_for(rm.env_key)
             self._models[role] = build_chat_model(rm.provider, rm.model, api_key)
-        return self._models[role]
+        primary = self._models[role]
+        fallback = self._fallback_model(rm)
+        return _FallbackModel(primary, fallback) if fallback is not None else primary
+
+    def _fallback_model(self, rm: RoleModel) -> Any:
+        """Build the configured ``LLM_FALLBACK`` model, or None when it's off / a different
+        provider isn't set / it would just fall back to the same provider."""
+        spec = get_settings().llm_fallback
+        provider, _, model = spec.partition(":")
+        if not provider or not model or provider == rm.provider:
+            return None
+        prov = self._providers.get(provider)
+        if prov is None:
+            return None
+        if self._fb_model is None:
+            api_key = get_settings().api_key_for(prov["env_key"])
+            self._fb_model = build_chat_model(provider, model, api_key)
+        return self._fb_model
 
     def structured[T: BaseModel](
         self,
