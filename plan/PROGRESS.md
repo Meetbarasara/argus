@@ -18,7 +18,7 @@
 | M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | 6906152 | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
-| M11 | Evaluation harness | in_progress | ✅ 2026-07-07 (clean; verify 146 + graph 19) | – | – | |
+| M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | M11_HASH | Harness complete + validated (live S3-v1 PASS); headline run quota-degraded (both free tiers exhausted) → clean re-run on fresh Gemini quota (08 #27, user-approved) |
 | M12 | Demo & docs | todo | – | – | – | |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
@@ -36,6 +36,39 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   worldstate/alerts/sent.jsonl after 41s; shopapi log shows 37 ConnectError lines
 - `pytest -m world` → 12 passed
 -->
+
+### M11 — 2026-07-10 (evaluation harness — engineering DONE + validated; headline quota-degraded)
+- **Engineering completion** (`5deb2ef`, on top of 49c9cae which was verify-green but CLI/report/
+  platform/UI-incomplete — gaps ruff+mypy+unit can't catch): run.py `--repeat-for-memory` (07 §4)
+  + `--resume`; `reset()` → actuator `/admin/reset_worldstate` (07 §2 — kills cross-case config/chaos
+  drift) + health-wait; `set_platform_env` verifies the `/api/health` config echo (07 §2); recovery
+  grading fix (the `/tail` body is `{lines:[...]}` not raw JSONL — the old code fed the wrapper dict
+  to the rule matcher, so recovery was **always false**) + poll up to 120s ("≤120s after
+  remediation"); UTF-8 stdout (cp1252 crashed on →/Δ); report.py `memory_lift_table` +
+  `model_comparison_table` + auto-composed EVALUATION.md ablation sections; **worker/tasks.py
+  policy_sim auto-approver** (AUTO_APPROVE was defined but never consumed → eval-mode S2–S5 hung at
+  WAITING_APPROVAL forever); UI Dashboard eval panel → `/api/evals/runs`. verify **166** unit + graph
+  **23** (+recovery-rederivation, ablation-renderer, resume-skip tests).
+- **Validated live end-to-end:** `--suite S3-v1 --memory off` → **PASS** (RCA ✓ · remediation ✓ ·
+  recovery ✓ · escalation ✓) — the policy_sim auto-approver resolves an APPROVE_ACTION case to
+  RESOLVED (not a 480s hang); reset_worldstate + health-echo + recovery grading all proven.
+- **Verification gate:** `poe verify` 166 + `test_grading` green · replay smoke `--suite S1
+  --llm-mode replay` completes + writes an eval_run · `--suite all --memory off` **15/15 graded**
+  (live) · `--repeat-for-memory` prints the lift table · `report` → EVALUATION.md · `/api/evals/runs`
+  = **23** (≥2) + UI panel live (proxied 200 through nginx) · verify-all: verify 166 + graph 23 +
+  integration 20/21 (test_platform webhook flake → **4/4 standalone** after a queue drain) + world
+  **8/8** (worker paused).
+- **Headline numbers QUOTA-DEGRADED — a finding, not a system fault (07 §6):** the full baseline
+  (`a6313997`) graded 15/15 but scored **2/15 PASS**. Gemini's free-tier daily cap (~20 req)
+  exhausted after the health smoke + S3-v1 validations, and Groq — bearing the doubled load once
+  every Gemini-role call fell back to it — hit its per-minute TPM (429) → **10/15 cases FAILED on
+  the first LLM call** (0–1 `llm_calls`, no investigation). This measures the free-tier quota, not
+  Argus (isolated S3-v1 PASS + M05–M07 live successes prove the system works with capacity). The
+  memory ablation is likewise quota-degraded ("insufficient data"). **Clean full-suite headline +
+  ablation re-run DEFERRED to fresh Gemini quota** (08 #27) — user-approved ("finish now, re-run
+  clean later"). EVALUATION.md committed with a prominent quota caveat + honest §Failures (incl. the
+  quota-independent **S1-v2**: RCA ✓ but decoys → wrong remediation + over-escalation — a real
+  change-correlation-precision finding); it will regenerate with clean numbers on fresh quota.
 
 ### M00 — 2026-07-03 (partial: docker items pending)
 - Ran: `uv run poe fmt` then `uv run poe verify` → ruff format ✅, ruff check ✅,
@@ -429,6 +462,11 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-07 | M10 added `GET /tool_calls/{id}` (sibling of the existing `/llm_calls/{id}`) and made both resolve by **span_id** as well as pk | 03 §4 lists the llm_calls drill-down but the trace tab only knows a span's `span_id`; the tool_calls table (03 §1) had no read surface. A pk-guarded lookup (`_pk_or_none`) avoids a 500 when a 16-hex span_id is passed to the UUID pk | Additive read endpoints mirroring an existing pattern; no shape of an existing endpoint changed |
 | 2026-07-07 | M10 interactive browser click-through (inject S3 → Approve → RESOLVED) not driven this session | exhausted Gemini free-tier quota + offline browser-automation extension; the decide→resume→RESOLVED flow is proven by `test_hitl` (M06) and every UI-consumed endpoint returns live data | UI verified via npm gates + vitest + docker-200 + live data plumbing; interactive walkthrough pending quota/extension |
 | 2026-07-07 | Added opt-in provider fallback to the M03 router (`LLM_FALLBACK=provider:model`): a rate-limited/quota-exhausted call transparently retries on the fallback model (Gemini→Groq) | user request — testing must not stall when the Gemini free-tier daily quota exhausts; Groq (llama-3.3-70b) is the already-integrated powerful free alternative | Default empty = off (no behaviour/test change); +5 unit tests; live-proven (forced 429 → Groq completed; non-429 propagates). Not a milestone — cross-cutting test-infra |
+| 2026-07-10 | M11: added policy_sim auto-approver to `worker/tasks.py` (`_park_for_human` → `_auto_decide_and_resume`) | `AUTO_APPROVE=policy_sim` (07 §2) was defined in settings + echoed by /health but NEVER consumed — eval-mode APPROVE_ACTION cases (S2–S5) would park at WAITING_APPROVAL forever with no human to decide. Now auto-decides (status APPROVED, `decided_by=policy_sim`) + resumes via the existing task | Eval mode resolves autonomously; human mode unchanged (branch is policy_sim-gated); take_over self-resolves to TAKEN_OVER. Completes the 07 §2 mechanism |
+| 2026-07-10 | M11: fixed recovery grading in `evals/run.py` — `_recovered_via_tail` parsed the actuator `/tail` JSON `{lines:[...]}` as raw JSONL (fed the wrapper dict to `_rule_ok_from_lines` → recovery **always false**); + poll up to 120s | pre-existing bug in 49c9cae; recovery is the graph-independent grading signal (07 §3), so a false-negative capped every case at ≤PARTIAL | +5 recovery-rederivation unit tests; live S3-v1 flipped PARTIAL→PASS |
+| 2026-07-10 | M11: runner `reset()` now calls actuator `/admin/reset_worldstate` before injecting + waits for API/actuator health; `set_platform_env` verifies the `/api/health` config echo; UTF-8 stdout | 07 §2 requires a per-case worldstate clear (a prior case's bad deploy / in-memory chaos leaked into the next) + the health-echo verify; Windows cp1252 crashed the run on the →/Δ/≥ printed by the lift table | Correct per-case isolation; no schema/shape change |
+| 2026-07-10 | M11: headline eval run quota-degraded (2/15) — both free-tier LLM providers exhausted (Gemini daily cap + Groq per-minute TPM under the doubled fallback load); clean full-suite + ablation re-run **deferred to fresh quota** | 08 #27 (daily caps block the run → finish next day rather than degrade); user-approved "finish now, re-run clean later". Harness validated live (S3-v1 PASS) | EVALUATION.md committed with a prominent quota caveat + honest §Failures; regenerates clean on fresh quota. Gates mechanically green |
+| 2026-07-10 | M11 session: Docker Desktop was wedged (`docker-desktop` WSL2 distro Stopped while Docker Desktop.exe ran → `docker info` hangs); recovered via `wsl --shutdown` + relaunch + `up -d --wait` | environment (not code) — the recurring "Docker keeps crashing" root cause | Recorded in [[argus-live-gate-ops]]; no code impact |
 
 ## Environment facts (fill during build)
 
