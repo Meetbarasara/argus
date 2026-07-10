@@ -38,3 +38,6 @@ export const useDashboard = () =>
 
 export const useHealth = () =>
   useQuery({ queryKey: ["health"], queryFn: () => api.health(), refetchInterval: 15000 });
+
+export const useEvalRuns = () =>
+  useQuery({ queryKey: ["evalRuns"], queryFn: () => api.evalRuns(), refetchInterval: CALM });

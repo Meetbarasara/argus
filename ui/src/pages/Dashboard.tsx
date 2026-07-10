@@ -14,7 +14,8 @@ import type { ReactNode } from "react";
 import { EmptyState, ErrorNote, PageHeader, Spinner } from "../components/ui";
 import { StatusChip } from "../components/StatusChip";
 import { money, pct, seconds } from "../lib/format";
-import { useDashboard } from "../queries";
+import type { EvalRunSummary } from "../api";
+import { useDashboard, useEvalRuns } from "../queries";
 
 const TOOLTIP = {
   contentStyle: {
@@ -36,8 +37,62 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: st
   );
 }
 
+function evalMemory(r: EvalRunSummary): string {
+  if (r.config?.ablation === "memory") return r.config.condition ?? "?";
+  return r.config?.memory_enabled ? "on" : "off";
+}
+
+function EvalPanel({ runs }: { runs: EvalRunSummary[] }) {
+  if (runs.length === 0) {
+    return (
+      <EmptyState
+        icon={<FlaskConical className="h-7 w-7" />}
+        title="No eval runs yet"
+        hint="Run the evaluation harness (python -m argus.evals.run) to populate suite scores and the memory-lift ablation here."
+      />
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-ink-800 text-left text-xs uppercase tracking-wide text-ink-500">
+            <th className="py-2 pr-4 font-medium">Suite</th>
+            <th className="py-2 pr-4 font-medium">When</th>
+            <th className="py-2 pr-4 font-medium">Memory</th>
+            <th className="py-2 pr-4 font-medium">Supervisor</th>
+            <th className="py-2 text-right font-medium">Pass rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {runs.slice(0, 8).map((r) => {
+            const rate = r.cases ? Math.round((100 * r.passes) / r.cases) : 0;
+            return (
+              <tr key={r.id} className="border-b border-ink-800/60">
+                <td className="py-2 pr-4 font-medium text-ink-100">{r.suite}</td>
+                <td className="py-2 pr-4 text-ink-500">{(r.started_at ?? "").slice(0, 10)}</td>
+                <td className="py-2 pr-4">
+                  <span className="rounded bg-ink-800 px-1.5 py-0.5 text-xs text-ink-300">
+                    {evalMemory(r)}
+                  </span>
+                </td>
+                <td className="py-2 pr-4 text-ink-400">{r.config?.supervisor_model ?? "—"}</td>
+                <td className="py-2 text-right tabular-nums text-ink-200">
+                  {r.passes}/{r.cases}
+                  {r.cases ? ` · ${rate}%` : ""}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { data, isLoading, error } = useDashboard();
+  const evals = useEvalRuns();
 
   return (
     <div>
@@ -107,11 +162,7 @@ export default function Dashboard() {
 
             <div className="card p-4">
               <div className="mb-2 text-xs uppercase tracking-wide text-ink-500">Evaluation</div>
-              <EmptyState
-                icon={<FlaskConical className="h-7 w-7" />}
-                title="No eval runs yet"
-                hint="The evaluation harness (M11) will populate suite scores, per-case PASS/PARTIAL/FAIL, and the memory-lift ablation here."
-              />
+              {evals.data ? <EvalPanel runs={evals.data} /> : <Spinner label="Loading eval runs…" />}
             </div>
           </>
         )}

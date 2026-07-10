@@ -13,7 +13,7 @@ from sqlalchemy import select
 from argus.agents.schemas import JudgeVerdict
 from argus.db.models import EvalCase, EvalRun
 from argus.db.session import session_scope
-from argus.evals.run import Platform, run_case
+from argus.evals.run import Platform, _graded_case_ids, run_case, run_suite
 
 pytestmark = pytest.mark.graph
 
@@ -106,3 +106,18 @@ def test_missing_incident_records_a_fail() -> None:
     with session_scope() as session:
         c = session.scalars(select(EvalCase).where(EvalCase.run_id == run_id)).one()
     assert c.outcome == "FAIL" and c.incident_id is None
+
+
+def test_resume_skips_already_graded_cases() -> None:
+    inc = _incident()
+    run_id = _new_run()
+    run_case("S1-v1", _platform(inc), _JudgeRouter(), run_id)  # type: ignore[arg-type]
+    skip = _graded_case_ids(run_id)
+    assert "S1-v1" in skip
+    # resuming the [S1-v1, S1-v2] suite must skip S1-v1, grading only S1-v2 (no duplicate row)
+    run_suite(["S1-v1", "S1-v2"], _platform(inc), _JudgeRouter(), run_id, skip)  # type: ignore[arg-type]
+    with session_scope() as session:
+        ids = sorted(
+            session.scalars(select(EvalCase.scenario_id).where(EvalCase.run_id == run_id)).all()
+        )
+    assert ids == ["S1-v1", "S1-v2"]

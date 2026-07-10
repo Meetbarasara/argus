@@ -7,7 +7,7 @@ idempotency check (08 #19)."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -24,6 +24,7 @@ from argus.obs import otel
 from argus.obs.spans import span
 from argus.policy.risk_gate import load_policy
 from argus.repo import incidents as incident_repo
+from argus.settings import get_settings
 from argus.worker.app import celery_app
 
 log = structlog.get_logger(__name__)
@@ -110,6 +111,33 @@ def _park_for_human(incident_id: str, payload: dict[str, Any]) -> None:
                 status_reason="awaiting human decision",
                 **escalation_field(incident, level),
             )
+    # eval mode: no human is watching, so decide as policy dictates and resume (07 §2)
+    if get_settings().auto_approve == "policy_sim":
+        _auto_decide_and_resume(incident_id)
+
+
+def _auto_decide_and_resume(incident_id: str) -> None:
+    """AUTO_APPROVE=policy_sim (07 §2): decide the just-parked approval automatically — approve
+    the proposed remediation, or self-resolve a take_over — recorded ``decided_by=policy_sim``,
+    then enqueue the resume. Real (human) mode leaves the row PENDING for the UI/API."""
+    with session_scope() as session:
+        approval = session.scalars(
+            select(Approval)
+            .where(Approval.incident_id == incident_id, Approval.status == "PENDING")
+            .order_by(Approval.created_at.desc())
+        ).first()
+        if approval is None:
+            return
+        approval.status = "APPROVED"
+        approval.decided_by = "policy_sim"
+        approval.decided_at = datetime.now(UTC)
+        if approval.level == "TAKE_OVER":
+            approval.modified_action = {
+                "root_cause": "auto-resolved in eval mode (policy_sim take-over)",
+                "action_taken": "escalation recorded; no automated remediation",
+            }
+        session.add(approval)
+    resume_incident.delay(incident_id)
 
 
 def _finalize(incident_id: str, result: dict[str, Any]) -> str:

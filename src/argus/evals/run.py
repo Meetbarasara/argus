@@ -9,9 +9,10 @@ mechanics are unit-testable without docker or LLM quota; ``main`` wires the real
 from __future__ import annotations
 
 import argparse
-import json
+import io
 import operator
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,12 +20,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from argus.db.models import EvalCase, EvalRun
 from argus.db.session import session_scope
 from argus.evals import scenarios
 from argus.evals.grade import CaseGrade, grade_case
+from argus.evals.report import memory_lift_table
 from argus.graph.verify import rule_ok
 from argus.llm.router import LLMRouter
 
@@ -98,10 +100,18 @@ def run_case(case_id: str, platform: Platform, router: LLMRouter, run_id: str) -
 
 
 def run_suite(
-    case_ids: list[str], platform: Platform, router: LLMRouter, run_id: str
+    case_ids: list[str],
+    platform: Platform,
+    router: LLMRouter,
+    run_id: str,
+    skip: set[str] | None = None,
 ) -> dict[str, str]:
+    skip = skip or set()
     results: dict[str, str] = {}
     for i, case_id in enumerate(case_ids, 1):
+        if case_id in skip:
+            print(f"[{i}/{len(case_ids)}] {case_id} … already graded, skipping", flush=True)
+            continue
         print(f"[{i}/{len(case_ids)}] {case_id} …", flush=True)
         try:
             results[case_id] = run_case(case_id, platform, router, run_id)
@@ -111,6 +121,28 @@ def run_suite(
             results[case_id] = f"ERROR({exc})"
         print(f"    → {results[case_id]}", flush=True)
     return results
+
+
+def _graded_case_ids(run_id: str) -> set[str]:
+    """scenario_ids already persisted for a run — ``--resume`` skips them."""
+    with session_scope() as session:
+        rows = session.scalars(select(EvalCase.scenario_id).where(EvalCase.run_id == run_id)).all()
+    return {str(r) for r in rows}
+
+
+def _eval_case_dicts(run_id: str) -> list[dict[str, Any]]:
+    """Minimal case rows for the memory-lift table (07 §4)."""
+    with session_scope() as session:
+        cases = session.scalars(select(EvalCase).where(EvalCase.run_id == run_id)).all()
+        return [
+            {
+                "scenario_id": c.scenario_id,
+                "llm_calls": c.llm_calls,
+                "mttr_seconds": c.mttr_seconds,
+                "rca_correct": c.rca_correct,
+            }
+            for c in cases
+        ]
 
 
 # --- real platform wiring ------------------------------------------------------------
@@ -136,12 +168,44 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
             token=token,
         )
 
+    def _reset_worldstate() -> None:
+        # actuator admin op: rewrite config/{shopapi,paymentsvc}.json to baseline, clear
+        # paymentsvc's in-memory chaos, truncate deploy/metric/alert history (07 §2 clean slate)
+        try:
+            with httpx.Client(
+                base_url=actuator_url, headers={"X-Actuator-Token": token}, timeout=15.0
+            ) as c:
+                c.post("/admin/reset_worldstate").raise_for_status()
+        except Exception as exc:
+            print(f"    reset_worldstate failed (continuing): {exc}", flush=True)
+
+    def _await_ready(timeout: float = 60.0) -> None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                api_ok = client.get("/api/health").status_code == 200
+            except Exception:
+                api_ok = False
+            try:
+                with httpx.Client(base_url=actuator_url, timeout=5.0) as c:
+                    act_ok = c.get("/health").status_code == 200
+            except Exception:
+                act_ok = False
+            if api_ok and act_ok:
+                break
+            time.sleep(2)
+        time.sleep(10)  # warmup: let shopapi rebuild its pool + poller take a clean baseline
+
     def reset() -> None:
-        # restart the world profile and let it warm up; per-case memory hygiene is separate
+        # 07 §2: clear worldstate to baseline so a prior case's bad deploy/chaos never leaks into
+        # the next, then restart the mutable world containers — shopredis (S1 stops it), shopapi
+        # (reload baseline config + fresh pool), alertwatch (clear the 600s refire cooldown so the
+        # next alert fires) — and wait for the API + actuator to be reachable before injecting.
+        _reset_worldstate()
         subprocess.run(
             ["docker", "compose", "restart", "shopredis", "shopapi", "alertwatch"], check=False
         )
-        time.sleep(8)
+        _await_ready()
 
     def await_incident(since_iso: str, timeout: float) -> str | None:
         deadline = time.time() + timeout
@@ -165,8 +229,17 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
         return incident
 
     def recovered(alert: dict[str, Any]) -> bool:
-        # independent recovery check from raw metrics via the actuator's whitelisted tail
-        return _recovered_via_tail(alert, actuator_url, token)
+        # 07 §1/§3: independent recovery check from raw metrics via the actuator /tail. Poll up to
+        # 120s ("breached rule returns below threshold ≤120s after remediation") — a rolling-window
+        # metric (err_rate_60s) or a dependency re-check lags the fix, so a single read right at the
+        # terminal transition false-negatives a case that does recover moments later.
+        deadline = time.time() + 120.0
+        while True:
+            if _recovered_via_tail(alert, actuator_url, token):
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(8)
 
     return Platform(do_inject, reset, await_incident, fetch_incident, await_terminal, recovered)
 
@@ -180,7 +253,8 @@ def _recovered_via_tail(alert: dict[str, Any], actuator_url: str, token: str) ->
         ) as c:
             resp = c.get("/tail", params={"file": "metrics/metrics.jsonl", "last": 400})
             resp.raise_for_status()
-            lines = [json.loads(ln) for ln in resp.text.splitlines() if ln.strip()]
+            # /tail returns {"file":..., "lines":[{metric}, ...]} — the metric dicts, not raw JSONL
+            lines = [ln for ln in resp.json().get("lines", []) if isinstance(ln, dict)]
         return _rule_ok_from_lines(alert, lines)
     except Exception:
         return rule_ok(alert) is True
@@ -208,7 +282,12 @@ def _rule_ok_from_lines(alert: dict[str, Any], lines: list[dict[str, Any]]) -> b
     return not _OPS.get(op, operator.gt)(latest, threshold)
 
 
-def set_platform_env(memory: bool, supervisor_model: str | None, llm_mode: str) -> None:
+def set_platform_env(
+    memory: bool,
+    supervisor_model: str | None,
+    llm_mode: str,
+    api_url: str = "http://localhost:8080",
+) -> None:
     """Point the platform at the run's config by rewriting .env and recreating api+worker,
     then verify via /api/health's config echo (07 §2)."""
     import re
@@ -230,7 +309,28 @@ def set_platform_env(memory: bool, supervisor_model: str | None, llm_mode: str) 
         text_env = upsert(text_env, "ARGUS_MODEL__SUPERVISOR", supervisor_model)
     env.write_text(text_env, encoding="utf-8")
     subprocess.run(["docker", "compose", "up", "-d", "api", "worker"], check=False)
-    time.sleep(8)
+    _await_config_echo(api_url, memory, llm_mode)
+
+
+def _await_config_echo(api_url: str, memory: bool, llm_mode: str, timeout: float = 90.0) -> None:
+    """Wait until /api/health echoes the run's active config (07 §2) — AUTO_APPROVE=policy_sim,
+    the right memory flag and llm_mode — so a case never runs against stale env."""
+    deadline = time.time() + timeout
+    last: dict[str, Any] = {}
+    while time.time() < deadline:
+        try:
+            last = dict(httpx.get(f"{api_url}/api/health", timeout=5.0).json().get("config", {}))
+            if (
+                last.get("auto_approve") == "policy_sim"
+                and bool(last.get("memory_enabled")) == memory
+                and last.get("llm_mode") == llm_mode
+            ):
+                print(f"    health echo confirms {last}", flush=True)
+                return
+        except Exception:
+            pass
+        time.sleep(2)
+    print(f"    warning: health echo unconfirmed in {timeout:.0f}s (last={last})", flush=True)
 
 
 def wipe_memories() -> None:
@@ -253,31 +353,143 @@ def _finish_run(run_id: str) -> None:
             run.finished_at = datetime.now(UTC)
 
 
+def _config(
+    memory: bool, supervisor_model: str | None, llm_mode: str, **extra: Any
+) -> dict[str, Any]:
+    cfg: dict[str, Any] = {
+        "memory_enabled": memory,
+        "supervisor_model": supervisor_model or "gemini-2.5-flash",
+        "llm_mode": llm_mode,
+        "auto_approve": "policy_sim",
+    }
+    cfg.update(extra)
+    return cfg
+
+
+def _memory_pairs(suite: str) -> list[tuple[str, str]]:
+    """(v1 seed, v2 measure) pairs for each scenario present in ``suite`` (07 §4)."""
+    all_ids = scenarios.suite_ids(suite)
+    prefixes = sorted({cid.split("-", 1)[0] for cid in all_ids})
+    return [
+        (f"{p}-v1", f"{p}-v2") for p in prefixes if f"{p}-v1" in all_ids and f"{p}-v2" in all_ids
+    ]
+
+
+def run_memory_ablation(
+    suite: str,
+    llm_mode: str,
+    supervisor_model: str | None,
+    api_url: str,
+    actuator_url: str,
+    token: str,
+    router: LLMRouter,
+) -> tuple[str, str]:
+    """07 §4 memory-lift protocol: per scenario, v1 seeds → v2 measures; run once with memory ON
+    and once OFF, each condition wiping `memories` first so they are independent. Returns the two
+    run ids (on, off)."""
+    pairs = _memory_pairs(suite)
+    run_ids: dict[str, str] = {}
+    for condition, memory in (("on", True), ("off", False)):
+        print(f"\n=== memory {condition.upper()} · {len(pairs)} scenario(s) ===", flush=True)
+        set_platform_env(memory, supervisor_model, llm_mode, api_url)
+        wipe_memories()
+        cfg = _config(memory, supervisor_model, llm_mode, ablation="memory", condition=condition)
+        run_id = _start_run(f"memory-{condition}", cfg)
+        platform = _real_platform(api_url, actuator_url, token)
+        for seed_id, measure_id in pairs:
+            for cid in (seed_id, measure_id):
+                print(f"[{condition}] {cid} …", flush=True)
+                try:
+                    print(f"    → {run_case(cid, platform, router, run_id)}", flush=True)
+                except Exception as exc:  # a broken case must not sink the condition
+                    print(f"    {cid} errored: {exc}", flush=True)
+                    _persist_case(run_id, cid, None, None)
+        _finish_run(run_id)
+        run_ids[condition] = run_id
+    return run_ids["on"], run_ids["off"]
+
+
+def _resume_run(
+    run_id: str, api_url: str, actuator_url: str, token: str, router: LLMRouter
+) -> None:
+    """Continue an interrupted run, skipping already-graded cases (deliverable). Re-points the
+    platform at the run's original config; does NOT wipe memories (preserves seeded state)."""
+    with session_scope() as session:
+        run = session.get(EvalRun, run_id)
+        if run is None:
+            raise SystemExit(f"no eval_run {run_id}")
+        cfg = dict(run.config or {})
+        suite = run.suite
+    sup = cfg.get("supervisor_model")
+    set_platform_env(
+        bool(cfg.get("memory_enabled")),
+        None if sup in (None, "gemini-2.5-flash") else str(sup),
+        str(cfg.get("llm_mode", "live")),
+        api_url,
+    )
+    if cfg.get("ablation") == "memory":
+        case_ids = [cid for pair in _memory_pairs("all") for cid in pair]
+    else:
+        case_ids = scenarios.suite_ids(suite)
+    skip = _graded_case_ids(run_id)
+    print(f"resume {run_id}: {len(skip)} done, {len(case_ids) - len(skip)} to go", flush=True)
+    platform = _real_platform(api_url, actuator_url, token)
+    results = run_suite(case_ids, platform, router, run_id, skip)
+    _finish_run(run_id)
+    print(f"\nresumed run {run_id}: {results}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
+    # Windows stdout defaults to cp1252, which can't encode the arrows/Δ/≥ we print (and the
+    # memory-lift table) → UnicodeEncodeError mid-run. Force UTF-8 so a run never dies on output.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(prog="argus.evals.run")
     ap.add_argument("--suite", default="all", help="all | S3 | S3-v2")
     ap.add_argument("--memory", choices=["on", "off"], default="off")
     ap.add_argument("--supervisor-model", default=None)
     ap.add_argument("--llm-mode", choices=["live", "record", "replay"], default="live")
+    ap.add_argument(
+        "--repeat-for-memory",
+        action="store_true",
+        help="07 §4 memory-lift ablation: per scenario v1 seeds→v2 measures, memory ON vs OFF",
+    )
+    ap.add_argument(
+        "--resume", default=None, metavar="RUN_ID", help="continue a run, skipping graded cases"
+    )
     ap.add_argument("--api-url", default="http://localhost:8080")
     ap.add_argument("--actuator-url", default="http://localhost:8010")
     ap.add_argument("--token", default="dev-actuator-token")
     args = ap.parse_args(argv)
+    router = LLMRouter()
+
+    if args.repeat_for_memory:
+        on_id, off_id = run_memory_ablation(
+            args.suite,
+            args.llm_mode,
+            args.supervisor_model,
+            args.api_url,
+            args.actuator_url,
+            args.token,
+            router,
+        )
+        print(
+            "\n" + memory_lift_table(_eval_case_dicts(on_id), _eval_case_dicts(off_id)), flush=True
+        )
+        print(f"memory ablation runs: ON={on_id} OFF={off_id}", flush=True)
+        return
+
+    if args.resume:
+        _resume_run(args.resume, args.api_url, args.actuator_url, args.token, router)
+        return
 
     case_ids = scenarios.suite_ids(args.suite)
     print(f"eval suite {args.suite}: {len(case_ids)} cases {case_ids}", flush=True)
-    set_platform_env(args.memory == "on", args.supervisor_model, args.llm_mode)
+    set_platform_env(args.memory == "on", args.supervisor_model, args.llm_mode, args.api_url)
     wipe_memories()
-
-    config = {
-        "memory_enabled": args.memory == "on",
-        "supervisor_model": args.supervisor_model or "gemini-2.5-flash",
-        "llm_mode": args.llm_mode,
-        "auto_approve": "policy_sim",
-    }
+    config = _config(args.memory == "on", args.supervisor_model, args.llm_mode)
     run_id = _start_run(args.suite, config)
     platform = _real_platform(args.api_url, args.actuator_url, args.token)
-    router = LLMRouter()
     results = run_suite(case_ids, platform, router, run_id)
     _finish_run(run_id)
     print(f"\nrun {run_id} complete: {results}", flush=True)

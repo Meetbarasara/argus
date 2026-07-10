@@ -154,6 +154,27 @@ export interface DashboardSummary {
   cost_per_incident: IncidentCost[];
 }
 
+export interface EvalRunConfig {
+  memory_enabled?: boolean;
+  supervisor_model?: string;
+  llm_mode?: string;
+  auto_approve?: string;
+  ablation?: string;
+  condition?: string;
+}
+
+export interface EvalRunSummary {
+  id: string;
+  suite: string;
+  started_at: string | null;
+  finished_at: string | null;
+  config: EvalRunConfig;
+  git_sha: string | null;
+  notes: string | null;
+  cases: number;
+  passes: number;
+}
+
 export interface Health {
   status: string;
   db: boolean;
@@ -222,5 +243,6 @@ export const api = {
   deleteMemory: (id: string) => req<{ deleted: string }>(`/memories/${id}`, { method: "DELETE" }),
   consolidate: () => req<{ merged: number; decayed: number }>(`/memories/consolidate`, { method: "POST" }),
   dashboard: () => req<DashboardSummary>(`/dashboard/summary`),
+  evalRuns: () => req<EvalRunSummary[]>(`/evals/runs`),
   health: () => req<Health>(`/health`),
 };

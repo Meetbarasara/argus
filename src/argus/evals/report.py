@@ -131,6 +131,82 @@ def render_report(run: dict[str, Any], cases: list[dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+# --- ablation renderers (pure; 07 §4/§5) ---------------------------------------------
+def _measured(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The repeat (v2) cases — the ones the memory ablation actually measures (07 §4)."""
+    return [c for c in cases if str(c.get("scenario_id", "")).endswith("-v2")]
+
+
+def memory_lift_table(cases_on: list[dict[str, Any]], cases_off: list[dict[str, Any]]) -> str:
+    """07 §4 memory lift: compare the repeat (v2) cases, memory ON vs OFF, on LLM calls / MTTR /
+    RCA. Each condition wiped `memories` then re-seeded with its v1 run, so they are independent.
+    Fewer LLM calls on the ON repeat = memory paying off. Pure → unit-tested from fixtures."""
+    on = {str(c["scenario_id"]): c for c in _measured(cases_on)}
+    off = {str(c["scenario_id"]): c for c in _measured(cases_off)}
+    ids = sorted(set(on) & set(off))
+    tick = lambda b: "✅" if b else "❌"  # noqa: E731
+    out = [
+        "## Ablation: memory lift",
+        "",
+        "Repeat-fault (v2) cases, memory ON vs OFF — each condition wipes `memories` then "
+        "re-seeds via the v1 run (07 §4). Δ = ON−OFF, so a negative Δ means memory cut calls.",
+        "",
+        "| case | calls ON | calls OFF | Δ calls | MTTR ON | MTTR OFF | RCA ON | RCA OFF |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    tot_on = tot_off = 0
+    for sid in ids:
+        a, b = on[sid], off[sid]
+        ca, cb = int(a.get("llm_calls") or 0), int(b.get("llm_calls") or 0)
+        tot_on += ca
+        tot_off += cb
+        ma, mb = a.get("mttr_seconds"), b.get("mttr_seconds")
+        out.append(
+            f"| {sid} | {ca} | {cb} | {ca - cb:+d} | "
+            f"{f'{ma}s' if ma is not None else '—'} | {f'{mb}s' if mb is not None else '—'} | "
+            f"{tick(a.get('rca_correct'))} | {tick(b.get('rca_correct'))} |"
+        )
+    if not ids:
+        out.append("| _no paired v2 cases_ |  |  |  |  |  |  |  |")
+    out.append("")
+    if tot_off:
+        pct = round(100 * (tot_off - tot_on) / tot_off)
+        out.append(
+            f"**Aggregate:** {tot_on} vs {tot_off} LLM calls across {len(ids)} repeat case(s) — "
+            f"**{pct}% fewer with memory ON** (target ≥20%)."
+        )
+    else:
+        out.append("**Aggregate:** insufficient data (no OFF-condition calls recorded).")
+    out.append("")
+    return "\n".join(out)
+
+
+def model_comparison_table(runs: list[tuple[str, dict[str, Any], list[dict[str, Any]]]]) -> str:
+    """07 §5 supervisor-model comparison: same suite, memory OFF, supervisor swapped — headline
+    metrics side by side. ``runs`` = [(supervisor_model, config, cases)]. Pure."""
+    out = [
+        "## Ablation: supervisor model",
+        "",
+        "Same suite, memory OFF, supervisor model swapped (one flag) — the architecture is "
+        "model-agnostic. List-price cost.",
+        "",
+        "| supervisor | RCA | remediation | recovery | esc P/R | median calls | median MTTR | "
+        "median cost |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for model, _cfg, cases in runs:
+        s = summarize(cases)
+        mttr = f"{s['median_mttr']}s" if s["median_mttr"] is not None else "—"
+        out.append(
+            f"| {model} | {s['rca']}/{s['n']} | {s['remediation']}/{s['n']} | "
+            f"{s['recovered']}/{s['remediated']} | "
+            f"{round(100 * s['esc_precision'])}%/{round(100 * s['esc_recall'])}% | "
+            f"{s['median_calls']} | {mttr} | ${s['median_cost']:.4f} |"
+        )
+    out.append("")
+    return "\n".join(out)
+
+
 # --- DB-backed entry points ----------------------------------------------------------
 def _run_dict(run: EvalRun) -> dict[str, Any]:
     return {
@@ -175,15 +251,88 @@ def latest_run_id(session: Any) -> str | None:
     return run.id if run is not None else None
 
 
+def _all_runs(session: Any) -> list[EvalRun]:
+    return list(session.scalars(select(EvalRun).order_by(EvalRun.started_at.desc())).all())
+
+
+def _baseline_run(runs: list[EvalRun]) -> EvalRun | None:
+    """The headline run: the latest full ``--suite all`` non-ablation run (the memory-off
+    baseline); fall back to the latest non-ablation run, then to the latest run overall."""
+    non_abl = [r for r in runs if not (r.config or {}).get("ablation")]
+    full = [r for r in non_abl if r.suite == "all"]
+    for candidate in (full, non_abl, runs):
+        if candidate:
+            return candidate[0]
+    return None
+
+
+def _ablation_pair(runs: list[EvalRun], name: str) -> tuple[EvalRun | None, EvalRun | None]:
+    def pick(cond: str) -> EvalRun | None:
+        return next(
+            (
+                r
+                for r in runs
+                if (r.config or {}).get("ablation") == name
+                and (r.config or {}).get("condition") == cond
+            ),
+            None,
+        )
+
+    return pick("on"), pick("off")
+
+
+def _model_runs(runs: list[EvalRun], baseline: EvalRun | None) -> list[EvalRun]:
+    """Baseline + any other full memory-off run whose supervisor differs → model comparison."""
+    if baseline is None:
+        return []
+    base_model = (baseline.config or {}).get("supervisor_model")
+    picked = [baseline]
+    for r in runs:
+        cfg = r.config or {}
+        if (
+            cfg.get("ablation")
+            or r.suite != "all"
+            or cfg.get("memory_enabled")
+            or r.id == baseline.id
+        ):
+            continue
+        if cfg.get("supervisor_model") != base_model:
+            picked.append(r)
+    return picked if len(picked) > 1 else []
+
+
 def write_report(run_id: str | None = None, path: str = REPORT_PATH) -> str | None:
+    """Regenerate EVALUATION.md (07 §5): the baseline run's headline/per-case/failures/method,
+    then auto-embed the memory-lift ablation (when the ON/OFF pair is in the DB) and the
+    supervisor-model comparison (when a model-swap run is present)."""
     with session_scope() as session:
-        rid = run_id or latest_run_id(session)
-        if rid is None:
+        runs = _all_runs(session)
+        if not runs:
             return None
-        run = session.get(EvalRun, rid)
-        if run is None:
+        base = session.get(EvalRun, run_id) if run_id is not None else _baseline_run(runs)
+        if base is None:
             return None
-        markdown = render_report(_run_dict(run), _case_dicts(session, rid))
+        parts = [render_report(_run_dict(base), _case_dicts(session, base.id))]
+        m_on, m_off = _ablation_pair(runs, "memory")
+        if m_on is not None and m_off is not None:
+            parts.append(
+                memory_lift_table(_case_dicts(session, m_on.id), _case_dicts(session, m_off.id))
+            )
+        model_runs = _model_runs(runs, base)
+        if model_runs:
+            parts.append(
+                model_comparison_table(
+                    [
+                        (
+                            (r.config or {}).get("supervisor_model", "gemini-2.5-flash"),
+                            r.config or {},
+                            _case_dicts(session, r.id),
+                        )
+                        for r in model_runs
+                    ]
+                )
+            )
+        markdown = "\n".join(parts)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(markdown)
     return path
