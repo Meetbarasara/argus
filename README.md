@@ -1,154 +1,229 @@
-# Argus — an AI on-call engineer
+<div align="center">
 
-Argus is a **multi-agent incident-response platform**. When an alert fires on a running
-system, Argus investigates it the way a human SRE would — reads logs, checks metrics,
-reviews recent deploys — forms a root-cause hypothesis, has that hypothesis **independently
-reviewed**, and then either fixes the problem itself or **pauses for human approval**,
-depending on risk and confidence. Every step is traced end to end. Every resolved incident
-becomes a **memory** that makes the next similar incident faster and cheaper. An
-**evaluation harness** proves the whole thing with numbers.
+# 🛰️ Argus
 
-It is not a chatbot wrapper. It is production-shaped infrastructure for autonomous AI
-workflows: task decomposition, tool use, independent review, deterministic safety gating,
-human-in-the-loop, persistent memory, full observability, and a measurable eval suite.
+### An AI on-call engineer — it investigates production alerts, finds the root cause, and safely fixes it or escalates to a human.
 
-> **Stack:** LangGraph · FastAPI · Celery · Postgres/pgvector · React/TS · OpenTelemetry ·
-> Docker Compose · Gemini + Groq (free tiers). Runs offline except for the LLM API calls.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org)
+[![LangGraph](https://img.shields.io/badge/agents-LangGraph-1c3d5a.svg)](https://langchain-ai.github.io/langgraph/)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688.svg)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/UI-React%20%2B%20TS-61dafb.svg)](https://react.dev)
+[![Postgres + pgvector](https://img.shields.io/badge/store-Postgres%20%2B%20pgvector-336791.svg)](https://github.com/pgvector/pgvector)
+[![Docker](https://img.shields.io/badge/run-Docker%20Compose-2496ed.svg)](https://docs.docker.com/compose/)
 
-_(Demo GIF placeholder — see `docs/img/` and the recording checklist in
-[INTERVIEW_NOTES.md](INTERVIEW_NOTES.md).)_
+</div>
 
-## Architecture
+When an alert fires, **Argus does what a seasoned SRE does**: it reads the logs, checks the
+metrics, reviews recent deploys, forms a root-cause hypothesis, has that hypothesis
+**independently reviewed**, and then — depending on risk and confidence — either **fixes the
+problem itself** or **pauses and asks a human to approve**. The decision to act is made by a
+deterministic policy, *never* by the language model. Every step is traced down to the
+individual prompt, token, and dollar. Every resolved incident becomes a **memory** that makes
+the next similar incident faster and cheaper.
 
-Two systems ship in one `docker-compose.yml`: a **demo world** (the patient — a small
-e-commerce stack that emits real logs/metrics/deploys and can be broken 5 ways) and the
-**Argus platform** (the doctor — the agent system that investigates and remediates).
+It ships with its own **live demo world** — a small e-commerce stack you can break in five
+realistic ways — so you can watch the whole investigate → approve → remediate → learn loop
+end to end, on your laptop, in minutes.
+
+<div align="center">
+<em>▶️ Inject a bad deploy → Argus diagnoses it → you approve the rollback → recovery.</em><br/>
+<sub>Demo GIF + screenshots: drop them in <code>docs/img/</code> (capture guide in <a href="INTERVIEW_NOTES.md">INTERVIEW_NOTES.md</a>).</sub>
+<!-- <img src="docs/img/demo.gif" alt="Argus demo" width="720"/> -->
+</div>
+
+---
+
+## ✨ Features
+
+- 🤖 **Multi-agent investigation** — a *supervisor* plans the investigation, *specialist*
+  agents gather evidence in parallel using real tools (log search, metric queries, deploy
+  history), and a *reviewer* independently validates the hypothesis. It's a stateful graph,
+  not a linear prompt chain.
+- 🛡️ **Safety by construction** — the LLM only *proposes* a fix; a deterministic risk policy
+  *disposes*. Anything risky requires human approval, and destructive actions are locked to a
+  single node behind a privileged, token-authenticated actuator.
+- 🙋 **Human-in-the-loop** — high-risk incidents pause for a human with the full context
+  (evidence, reasoning, proposed action). The paused investigation is durable — it survives a
+  restart and resumes from the exact step on **approve / modify / reject**.
+- 🧠 **Memory that compounds** — every resolved incident is distilled into a vector memory.
+  When a similar fault recurs, Argus recalls the past fix and resolves it in fewer steps.
+- 🔭 **Full observability** — one OpenTelemetry instrumentation feeds both a queryable
+  Postgres store (powering the UI) and an optional Jaeger view. Open any incident as a trace
+  tree, drill into a span, and see the exact prompt, token counts, and cost.
+- 🖥️ **Operator console** — a React UI: live incident feed, an interactive trace explorer,
+  approval cards, a memory browser, and cost/outcome dashboards.
+- 📊 **Measured, not vibes** — a 15-case seeded-fault evaluation suite scores root-cause
+  accuracy, remediation correctness, recovery rate, escalation precision/recall, and cost —
+  with **ablations** (memory on/off, model A/B).
+
+---
+
+## 🏗️ How it works
 
 ```mermaid
 flowchart LR
-  subgraph WORLD["Demo world"]
-    LG[loadgen] --> SA[shopapi]
-    SA --> PS[paymentsvc]
-    SA --> SDB[(shopdb)]
-    SA --> SR[(shopredis)]
-    TP[poller] -. metrics .-> WS[(worldstate)]
-    AW[alertwatch] -. reads .-> WS
-    ACT[actuator] -- docker socket --> DK[(Docker)]
+  subgraph WORLD["🌐 Demo world (the patient)"]
+    LG[load generator] --> SA[shop API]
+    SA --> PS[payment service]
+    SA --> DB[(Postgres)]
+    SA --> RC[(Redis cache)]
+    AW[alert watcher]
+    ACT[actuator]
   end
-  subgraph PLATFORM["Argus platform"]
-    API[api] --> RD[(redis)] --> WK[worker]
-    WK --> PG[(postgres+pgvector)]
-    UI[ui] --> API
+  subgraph ARGUS["🛰️ Argus platform (the doctor)"]
+    API[REST API] --> Q[(queue)] --> WK[worker · LangGraph]
+    WK --> PG[(Postgres + pgvector)]
+    UI[React console] --> API
   end
-  AW -- alert webhook --> API
-  WK -- LangGraph run --> PG
-  WK -- read-only --> WS
+  AW -- alert --> API
+  WK -- reads logs / metrics / deploys --> WORLD
   WK -- remediation --> ACT
-  WK -- LLM --> EXT[Gemini / Groq]
+  WK -- reasoning --> LLM[Gemini / Groq]
 ```
 
-**The incident loop:** alertwatch fires a webhook → the API creates an incident and
-enqueues a Celery task → the worker runs a LangGraph graph (`intake → recall → plan →
-parallel specialists → synthesize → review → risk gate → remediate/approve → verify →
-postmortem`) with a Postgres checkpointer keyed on the incident id → a deterministic risk
-gate decides autonomous vs. human approval → on approval the graph resumes from the exact
-paused node → recovery is verified from raw metrics → a postmortem memory is written.
+**The incident loop:** an alert becomes an incident → the graph runs
+`plan → investigate (parallel specialists) → synthesize → review → risk gate → remediate or
+request approval → verify recovery → write postmortem memory`, checkpointed at every step so
+it can pause for a human and resume later.
 
-## Why this is interesting
+---
 
-The five things AI-engineering roles actually screen for, each mapped to code:
+## 🧰 Tech stack — and *why*
 
-| Claim | Where it lives |
-|---|---|
-| **Multi-agent orchestration** — supervisor plans, specialists execute in parallel, a reviewer validates; a LangGraph state machine, not a prompt chain | [`graph/build.py`](src/argus/graph/build.py), [`graph/fanout.py`](src/argus/graph/fanout.py), [`agents/`](src/argus/agents) |
-| **Safety architecture** — the LLM never authorizes its own risky action; a deterministic policy gate does, and the tool executor refuses mutations outside the `remediate` node | [`policy/risk_gate.py`](src/argus/policy/risk_gate.py), [`tools/registry.py`](src/argus/tools/registry.py), [`config/policy.yaml`](config/policy.yaml) |
-| **Human-in-the-loop** — real `interrupt()`/resume across a worker restart; approve / modify / reject / take-over | [`graph/nodes/`](src/argus/graph/nodes), [`api/routers/approvals.py`](src/argus/api/routers/approvals.py) |
-| **Memory that provably helps** — pgvector recall + postmortem writes + a similarity fast-path, measured by an on/off ablation | [`memory/recall.py`](src/argus/memory/recall.py), [`memory/pgvector_store.py`](src/argus/memory/pgvector_store.py) |
-| **Evaluation discipline** — a 15-case seeded-fault suite with deterministic ground truth + an auditable LLM judge; recovery is re-derived from raw metrics (the system never grades its own homework) | [`evals/run.py`](src/argus/evals/run.py), [`evals/grade.py`](src/argus/evals/grade.py), [EVALUATION.md](EVALUATION.md) |
-| **Observability** — one OTel instrumentation, two sinks (Postgres for the UI, optional Jaeger); trace trees down to individual prompts, tokens, and dollars | [`obs/spans.py`](src/argus/obs/spans.py), [`obs/otel.py`](src/argus/obs/otel.py) |
+Every choice here is deliberate and defensible:
 
-## Evaluation
+| Concern | Technology | Why this one |
+|---|---|---|
+| **Agent orchestration** | **LangGraph** | Incidents are stateful, multi-step workflows with branching, retries, and human pauses. A graph with a durable checkpointer models that natively — a prompt chain can't pause, resume, or fan out to parallel workers. |
+| **API layer** | **FastAPI** | Async REST with Pydantic validation at the boundary and automatic OpenAPI docs. |
+| **Background execution** | **Celery + Redis** | A graph run takes minutes and must survive process restarts, so it runs on a durable task queue — not a request thread. Redis also backs the LLM rate limiter. |
+| **Data + memory** | **PostgreSQL + pgvector** | *One* database for both relational data (incidents, spans, approvals) and vector memory. No separate vector service to run, secure, or pay for — and it's swappable behind a thin interface. |
+| **Embeddings** | **fastembed** (bge-small, ONNX) | Local embeddings baked into the image — no embedding API, no rate limits, fully offline. |
+| **Language models** | **Gemini + Groq** | A provider-agnostic router with record/replay caching and automatic fallback; swapping the model is one environment variable. Runs on free tiers. |
+| **Observability** | **OpenTelemetry** | Instrument once, export twice — to Postgres (powers our UI/dashboards) and optionally to Jaeger. Industry-standard trace trees, right down to prompt/token/cost. |
+| **Frontend** | **React + TypeScript + Tailwind + Vite** | A typed, responsive operator console; TanStack Query polling keeps it simple (incidents last minutes, so no websockets needed). |
+| **Deployment** | **Docker Compose** | The entire system — platform *and* a live demo world — boots with a single command, reproducibly, on any machine with Docker. |
+| **Dev toolchain** | **uv · Ruff · Mypy · Pytest** | Fast, strict, fully typed — with unit, integration, and graph test tiers. |
 
-Argus grades itself on 15 seeded-fault cases (S1–S5 × three variants: clean / decoy
-deploys / noisy) across **RCA accuracy, remediation correctness, recovery rate, escalation
-precision & recall, MTTR, and cost**, plus two ablations (memory on/off, supervisor-model
-A/B). Grading is mostly deterministic — recovery is re-derived from raw `metrics.jsonl`,
-escalation from the approvals row, remediation from the actuator history; only root-cause
-_phrasing_ is judged, with an auditable rubric and a keyword fallback. Full method + scores
-live in **[EVALUATION.md](EVALUATION.md)**.
+---
 
-> **Headline-numbers status:** the harness is complete and validated end-to-end (a live
-> `S3-v1` run grades **PASS** on all four checks; M07 measured a **54 % memory-lift** on
-> repeats). The committed full-suite run is **quota-degraded** — both free-tier LLM
-> providers exhausted mid-run — so a clean headline + ablation re-run is queued for fresh
-> quota and will regenerate EVALUATION.md. See its top-of-file caveat.
+## 🚀 Getting started
 
-## Quickstart
+### Prerequisites
 
-Needs only **Docker + git** (the services run in containers). Two free API keys, no card:
-[Gemini](https://aistudio.google.com) · [Groq](https://console.groq.com).
+- **Docker + Docker Compose** and **git**. That's it — every service runs in a container.
+- Two **free** LLM API keys (no credit card):
+  [Google AI Studio](https://aistudio.google.com) (Gemini) and [Groq](https://console.groq.com).
+
+### 1 · Clone and configure
 
 ```bash
-git clone https://github.com/Meetbarasara/argus && cd argus
-cp .env.example .env            # then paste your GOOGLE_API_KEY + GROQ_API_KEY
+git clone https://github.com/Meetbarasara/argus.git
+cd argus
+cp .env.example .env         # then paste your GOOGLE_API_KEY and GROQ_API_KEY
+```
+
+### 2 · Launch the whole system
+
+```bash
 docker compose --profile platform --profile world up -d --build
-# break the world and watch Argus respond:
-docker compose exec actuator python -m demoworld.inject --scenario S1
-open http://localhost:8081       # incidents · trace explorer · approvals · memory · dashboard
 ```
 
-For the narrated 5-minute storyline (inject S3 → approve → resolve → repeat-fault memory
-win, with a before/after comparison), run the guided demo from the host (needs `uv`):
+This starts the Argus platform **and** the live demo world. Open the console at
+**http://localhost:8081** — you'll see a quiet, healthy system.
+
+### 3 · Break something and watch Argus respond
 
 ```bash
-uv run python -m argus.demo            # interactive: approve in the UI when prompted
-uv run python -m argus.demo --auto     # unattended (policy_sim approvals) — recording-safe
+docker compose exec actuator python -m demoworld.inject --scenario S1
 ```
 
-> Live-audience insurance (ADR-05): do a `--llm-mode record` dry run first, then present
-> against `--llm-mode replay` for a deterministic, zero-quota walkthrough.
+Within seconds an incident appears in the UI as `INVESTIGATING`; the trace tree grows live as
+the agents work; Argus diagnoses the stopped cache, restarts it, verifies recovery, and writes
+a memory — all on its own (S1 is low-risk, so it acts autonomously and just notifies you).
 
-## Repo tour
+### ▶️ The guided 5-minute demo
+
+For the full narrated storyline — a risky bad-deploy that pauses for your approval, then the
+*same* fault a second time resolving faster thanks to memory — run:
+
+```bash
+uv run python -m argus.demo          # interactive: approve in the UI when prompted
+uv run python -m argus.demo --auto   # hands-free (auto-approves) — great for recording
+```
+
+### The five fault scenarios
+
+Each one is a reproducible fault with a known correct fix — this is what "working" means:
+
+| Scenario | What breaks | Argus's fix | Human approval? |
+|---|---|---|---|
+| **S1** `redis_down` | cache container stopped | restart the cache | auto (just notifies) |
+| **S2** `payment_latency` | payment service slows down — *with no deploy to blame* | restart the service | ✅ approve |
+| **S3** `bad_deploy` | a deploy points checkout at a dead payment URL | roll back that deploy | ✅ approve |
+| **S4** `db_pool_exhaustion` | a deploy shrinks the DB connection pool | roll back that deploy | ✅ approve |
+| **S5** `feature_flag_500` | a deploy enables a broken feature flag | roll back that deploy | ✅ approve |
+
+> S2 is the interesting one — there's no recent deploy, so an agent that blindly blames the
+> last change gets it wrong. Argus doesn't.
+
+---
+
+## 🛡️ The safety model
+
+Argus is built so a language model can never authorize its own risky action. Three independent
+layers stand between a hypothesis and a production change:
+
+1. **Independent review** — a separate reviewer agent must accept the hypothesis before it can
+   proceed; weak evidence loops back for revision, then escalates.
+2. **A deterministic risk gate** — plain code (not an LLM) maps *(action × target × confidence)*
+   to an escalation level. The model proposes; policy disposes.
+3. **Human-in-the-loop** — anything above "notify" pauses for a human, who sees the full
+   evidence and approves, modifies, or rejects. Approval resumes the exact paused step.
+
+Plus **capability isolation**: only the privileged actuator can touch infrastructure, behind a
+token that never appears in a log or a prompt — agents get *capabilities*, not *credentials*.
+
+---
+
+## 📁 Project structure
 
 ```
-src/argus/        platform: api/ worker/ graph/ agents/ llm/ tools/ memory/ policy/ obs/ db/ repo/ evals/
-src/demoworld/    the monitored world: shopapi, paymentsvc, loadgen, poller, alertwatch, actuator, inject
-ui/               Vite + React + TS + Tailwind — 5-page control room
-config/           models.yaml · policy.yaml · alert_rules.yaml · prices.yaml
-evals/scenarios/  S1-v1.yaml … S5-v3.yaml (the versioned 15-case suite)
-plan/             the pre-approved build plan (source of truth) + PROGRESS.md
-tests/            unit/ · graph/ · integration/ · world (markers in plan/05)
+src/argus/        The platform — api · worker · graph · agents · llm · tools · memory · policy · obs · evals
+src/demoworld/    The monitored world — shop & payment services, load generator, alerting, fault injector
+ui/               React + TypeScript operator console (5 pages)
+config/           Model routing, risk policy, alert rules, pricing (all YAML)
+evals/scenarios/  The versioned 15-case evaluation suite
 ```
 
-Run the checks: `uv run poe verify` (ruff + mypy + unit) · `uv run poe test-graph`
-(LangGraph tier) · `uv run poe verify-all` (+ integration + world in a container).
+Run the checks locally: `uv run poe verify` (lint + types + unit tests) or
+`uv run poe verify-all` (adds the integration + world tiers).
 
-## Architecture decisions
+---
 
-One-liners; rationale in [plan/02-architecture.md](plan/02-architecture.md).
+## 📊 Evaluation
 
-- **ADR-01** — pgvector, not a dedicated vector DB (memory is <100k vectors; one less service; swappable behind a `VectorStore` interface).
-- **ADR-02** — deploys are hot-reloaded config files, not container restarts (deterministic, instant, clean audit trail for the change-analyst).
-- **ADR-03** — the actuator is the single privileged choke point (only it holds the docker socket; agents get *capabilities*, not *credentials*).
-- **ADR-04** — the risk gate is deterministic code, not an LLM (the LLM proposes; `policy.yaml` disposes).
-- **ADR-05** — record/replay is built into the LLM layer (deterministic tests + demos, zero quota).
-- **ADR-06** — the graph runs synchronously inside Celery (boring, reliable; parallelism via LangGraph's Send API, not asyncio).
-- **ADR-07** — one instrumentation, two span sinks (Postgres for the UI + optional OTLP → Jaeger).
-- **ADR-08** — the UI polls; no websockets (incidents last minutes; removes a failure class).
-- **ADR-09** — world telemetry is JSONL files, not Prometheus/Loki (deterministic, seedable; the *platform's* own telemetry is the full-featured part).
-- **ADR-10** — local embeddings via fastembed (bge-small, ONNX, baked into the image; no API, no rate limits).
+Argus grades itself on 15 seeded-fault cases (the five scenarios above × three variants:
+clean, decoy-deploys, and noisy) across **root-cause accuracy, remediation correctness,
+recovery rate, escalation precision & recall, MTTR, and cost** — plus two ablations
+(**memory on/off** and a **supervisor-model A/B**). Grading is mostly deterministic: recovery
+is re-derived from raw metrics, so the system never grades its own homework; only root-cause
+*phrasing* is judged, with an auditable rubric. Method and scores live in
+**[EVALUATION.md](EVALUATION.md)**.
 
-## Limitations (honest scope)
+---
 
-Deliberately **out of scope** (single-operator portfolio project): no auth / multi-tenancy;
-docker-compose only (no Kubernetes); no real PagerDuty/Slack integrations (the webhook + UI
-stand in); polling, not token streaming; no fine-tuning; services run in containers only
-(no Windows-native); the demo world stays small (2 app services + 2 datastores).
+## 🗺️ Scope
 
-Known **evaluation** limitations are analyzed, not hidden, in
-[EVALUATION.md](EVALUATION.md) §Failures — including change-correlation precision under
-decoy deploys, and the free-tier quota ceiling that caps a full unattended suite run.
+Argus is a focused, single-operator system — deliberately **not** trying to be a cloud product.
+Out of scope by design: authentication/multi-tenancy, Kubernetes (Compose only), real
+PagerDuty/Slack integrations (the webhook + UI stand in), token streaming, and fine-tuning. The
+demo world stays intentionally small (two app services + two datastores) so the *platform* is
+where the engineering goes.
 
-## License
+---
 
-[MIT](LICENSE).
+## 📄 License
+
+Released under the [MIT License](LICENSE).
