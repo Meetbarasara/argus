@@ -19,7 +19,7 @@
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
 | M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated (live S3-v1 PASS); headline run quota-degraded (both free tiers exhausted) → clean re-run on fresh Gemini quota (08 #27, user-approved) |
-| M12 | Demo & docs | todo | – | – | – | |
+| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done (demo.py + tests, README, INTERVIEW_NOTES, LICENSE, pyproject readme); runtime gate (`demo --auto` run, `down -v` clean-boot) + `docs/img/` screenshots + clean EVALUATION.md numbers deferred to fresh Gemini quota + a browser |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
 "Verify before" / "Gate after": ✅ + date, or ❌ + link to note.
@@ -36,6 +36,21 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   worldstate/alerts/sent.jsonl after 41s; shopapi log shows 37 ConnectError lines
 - `pytest -m world` → 12 passed
 -->
+
+### M12 — 2026-07-10 (demo & docs — writing DONE; runtime gate deferred to fresh quota)
+- **Written + verify-green (169 unit, +3 demo):** `src/argus/demo.py` — the guided 7-beat
+  storyline (01 §demo: inject S3 → review → risk gate → approve → resolve → repeat-fault memory
+  win with a side-by-side comparison; `--auto` = policy_sim for recording, interactive = approve
+  in the UI/API), reusing the M11 runner's validated platform machinery; `README.md` (pitch +
+  mermaid architecture + 5-claims→code-links + eval section + quickstart + repo tour + ADR index +
+  honest limitations); `INTERVIEW_NOTES.md` (3 safety layers, memory-lift/model numbers, §Failures,
+  scaling answers, free-LLM robustness framing, recording checklist); `LICENSE` (MIT); pyproject
+  `readme` re-added (closes the M00 deferral). All 16 doc-linked file paths verified to exist.
+- **Deferred (same blockers as the M11 headline):** `python -m argus.demo --auto` full run + the
+  `docker compose down -v` clean-boot quickstart test need LLM quota (and `down -v` wipes the eval
+  data the UI/EVALUATION.md reference) → run on fresh Gemini quota; `docs/img/` screenshots
+  (incidents, trace drill-down, approval card, dashboard, Jaeger) need a browser; README/
+  INTERVIEW_NOTES eval numbers regenerate when EVALUATION.md is re-run clean. Stays in_progress.
 
 ### M11 — 2026-07-10 (evaluation harness — engineering DONE + validated; headline quota-degraded)
 - **Engineering completion** (`5deb2ef`, on top of 49c9cae which was verify-green but CLI/report/
