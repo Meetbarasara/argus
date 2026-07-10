@@ -11,10 +11,10 @@ from argus.api.routers import (
     alerts,
     approvals,
     dashboard,
+    evals,
     health,
     incidents,
     memories,
-    stubs,
 )
 from argus.errors import ArgusError, PolicyError
 from argus.obs import otel
@@ -40,7 +40,7 @@ def create_app() -> FastAPI:
         approvals.router,
         memories.router,
         dashboard.router,
-        stubs.router,
+        evals.router,
     )
     for r in routers:
         app.include_router(r, prefix="/api")

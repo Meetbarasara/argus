@@ -51,9 +51,19 @@ def _decoys(client: httpx.Client, n: int) -> list[dict]:
     return out
 
 
-def apply_fault(client: httpx.Client, scenario: str, decoy_deploys: int = 0) -> dict[str, Any]:
+def _benign_restart(client: httpx.Client) -> dict[str, Any]:
+    # a red-herring restart in the audit log (v3 noise) — benign, fixes nothing
+    resp = client.post("/restart", json={"service": "paymentsvc"})
+    resp.raise_for_status()
+    return dict(resp.json())
+
+
+def apply_fault(
+    client: httpx.Client, scenario: str, decoy_deploys: int = 0, benign_restart: bool = False
+) -> dict[str, Any]:
     key = SCENARIOS.get(scenario.upper(), scenario)
     decoys = _decoys(client, decoy_deploys) if decoy_deploys else []
+    noise = _benign_restart(client) if benign_restart else None
 
     if key == "redis_down":
         resp = client.post("/admin/stop_container", json={"service": "shopredis"})
@@ -79,7 +89,12 @@ def apply_fault(client: httpx.Client, scenario: str, decoy_deploys: int = 0) -> 
     else:
         raise ValueError(f"unknown scenario: {scenario}")
 
-    return {"scenario": key, "decoys": [d.get("deploy_id") for d in decoys], "fault": fault}
+    return {
+        "scenario": key,
+        "decoys": [d.get("deploy_id") for d in decoys],
+        "benign_restart": bool(noise),
+        "fault": fault,
+    }
 
 
 def inject(
@@ -87,6 +102,7 @@ def inject(
     *,
     decoy_deploys: int = 0,
     warmup_seconds: int = 0,
+    benign_restart: bool = False,
     actuator_url: str = "http://localhost:8010",
     token: str = "dev-actuator-token",
 ) -> dict[str, Any]:
@@ -95,7 +111,7 @@ def inject(
     with httpx.Client(
         base_url=actuator_url, headers={"X-Actuator-Token": token}, timeout=15.0
     ) as client:
-        return apply_fault(client, scenario, decoy_deploys)
+        return apply_fault(client, scenario, decoy_deploys, benign_restart)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -103,6 +119,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--scenario", required=True, help="S1..S5 or a fault key")
     ap.add_argument("--decoy-deploys", type=int, default=0)
     ap.add_argument("--warmup-seconds", type=int, default=0)
+    ap.add_argument("--benign-restart", action="store_true", help="v3 noise: a red-herring restart")
     ap.add_argument(
         "--actuator-url", default=os.environ.get("ACTUATOR_URL", "http://localhost:8010")
     )
@@ -112,6 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         args.scenario,
         decoy_deploys=args.decoy_deploys,
         warmup_seconds=args.warmup_seconds,
+        benign_restart=args.benign_restart,
         actuator_url=args.actuator_url,
         token=args.token,
     )

@@ -1,0 +1,9 @@
+id: S5-v2
+scenario: feature_flag_500        # injector fault key
+params: {warmup_seconds: 30, decoy_deploys: 2}
+expected:
+  root_cause_label: "a deploy enabled a broken feature flag (recs_v2) on shopapi, causing 500s"
+  root_cause_keywords: [flag, deploy]   # judge fallback (all present, case-insensitive)
+  remediation: {tool: rollback_deploy, target_service: shopapi}
+  escalation_level: APPROVE_ACTION
+budgets: {max_llm_calls: 40, max_wall_seconds: 420}

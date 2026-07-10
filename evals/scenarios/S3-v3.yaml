@@ -1,0 +1,9 @@
+id: S3-v3
+scenario: bad_deploy_env        # injector fault key
+params: {warmup_seconds: 10, benign_restart: true}
+expected:
+  root_cause_label: "a deploy changed shopapi's payment_url to an unreachable endpoint, causing checkout 502s"
+  root_cause_keywords: [payment_url, deploy]   # judge fallback (all present, case-insensitive)
+  remediation: {tool: rollback_deploy, target_service: shopapi}
+  escalation_level: APPROVE_ACTION
+budgets: {max_llm_calls: 40, max_wall_seconds: 420}

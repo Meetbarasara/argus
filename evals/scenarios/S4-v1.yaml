@@ -1,0 +1,9 @@
+id: S4-v1
+scenario: db_pool_exhaustion        # injector fault key
+params: {warmup_seconds: 30}
+expected:
+  root_cause_label: "a deploy shrank shopapi's db pool, exhausting connections under load (pool-acquire timeouts)"
+  root_cause_keywords: [pool, deploy]   # judge fallback (all present, case-insensitive)
+  remediation: {tool: rollback_deploy, target_service: shopapi}
+  escalation_level: APPROVE_ACTION
+budgets: {max_llm_calls: 40, max_wall_seconds: 420}

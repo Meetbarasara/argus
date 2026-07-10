@@ -18,7 +18,7 @@
 | M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | 6906152 | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
-| M11 | Evaluation harness | todo | – | – | – | |
+| M11 | Evaluation harness | in_progress | ✅ 2026-07-07 (clean; verify 146 + graph 19) | – | – | |
 | M12 | Demo & docs | todo | – | – | – | |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
