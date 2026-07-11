@@ -48,29 +48,34 @@ def _is_rate_limited(exc: Exception) -> bool:
 
 
 class _FallbackModel:
-    """Wraps a live chat model so a rate-limited/quota-exhausted primary call transparently
-    retries on a fallback model (M-testing convenience: Gemini free-tier exhausted → Groq).
-    Non-rate-limit errors propagate unchanged. Tokens come from whichever model responds; on
-    the rare fallback path cost + the logged model name still reflect the primary."""
+    """Wraps a primary chat model with an ordered chain of fallbacks. On a rate-limit / quota
+    error it retries the next model in the chain, and so on — so exhausting one free tier rolls
+    onto the next (each model, even another of the same provider, carries its own per-model
+    daily budget). Non-rate-limit errors propagate unchanged; if every link is exhausted the
+    last error is raised. Tokens/cost stay logged against the role's configured primary model."""
 
-    def __init__(self, primary: Any, fallback: Any) -> None:
-        self._primary = primary
-        self._fallback = fallback
+    def __init__(self, models: list[Any]) -> None:
+        self._models = models  # [primary, fallback1, fallback2, …]
 
     def _wrap(self, model: Any, tools: Any) -> Any:
         return model.bind_tools(tools) if hasattr(model, "bind_tools") else model
 
     def bind_tools(self, tools: Any) -> _FallbackModel:
-        return _FallbackModel(self._wrap(self._primary, tools), self._wrap(self._fallback, tools))
+        return _FallbackModel([self._wrap(m, tools) for m in self._models])
 
     def invoke(self, messages: Any) -> Any:
-        try:
-            return self._primary.invoke(messages)
-        except Exception as exc:
-            if not _is_rate_limited(exc):
-                raise
-            log.warning("llm.fallback", error=str(exc)[:140])
-            return self._fallback.invoke(messages)
+        last: Exception | None = None
+        for i, model in enumerate(self._models):
+            try:
+                return model.invoke(messages)
+            except Exception as exc:
+                if not _is_rate_limited(exc):
+                    raise
+                last = exc
+                if i + 1 < len(self._models):
+                    log.warning("llm.fallback", step=i + 1, error=str(exc)[:120])
+        assert last is not None  # the loop only exits via return unless a rate-limit was seen
+        raise last
 
 
 def _to_dicts(messages: list[BaseMessage]) -> list[dict[str, Any]]:
@@ -90,7 +95,7 @@ class LLMRouter:
         self._redis = redis.Redis.from_url(settings.redis_url)
         self._models: dict[str, Any] = {}
         self._providers = load_providers()
-        self._fb_model: Any = None  # lazily-built fallback chat model (shared across roles)
+        self._fb_models: dict[str, Any] = {}  # lazily-built fallback chat models, cached by id
         if fake is not None:
             self.fake: FakeLLM | None = fake
         elif self.mode == "fake":
@@ -106,23 +111,29 @@ class LLMRouter:
             api_key = get_settings().api_key_for(rm.env_key)
             self._models[role] = build_chat_model(rm.provider, rm.model, api_key)
         primary = self._models[role]
-        fallback = self._fallback_model(rm)
-        return _FallbackModel(primary, fallback) if fallback is not None else primary
+        chain = self._fallback_chain(rm)
+        return _FallbackModel([primary, *chain]) if chain else primary
 
-    def _fallback_model(self, rm: RoleModel) -> Any:
-        """Build the configured ``LLM_FALLBACK`` model, or None when it's off / a different
-        provider isn't set / it would just fall back to the same provider."""
-        spec = get_settings().llm_fallback
-        provider, _, model = spec.partition(":")
-        if not provider or not model or provider == rm.provider:
-            return None
-        prov = self._providers.get(provider)
-        if prov is None:
-            return None
-        if self._fb_model is None:
-            api_key = get_settings().api_key_for(prov["env_key"])
-            self._fb_model = build_chat_model(provider, model, api_key)
-        return self._fb_model
+    def _fallback_chain(self, rm: RoleModel) -> list[Any]:
+        """Build the ``LLM_FALLBACK`` chain: a comma-separated list of ``provider:model`` tried
+        in order when the primary is rate-limited. A different *model* — even one of the same
+        provider — has its own per-model free-tier budget, so same-provider fallbacks are kept;
+        only the exact primary model is skipped. Unknown providers / malformed entries ignored."""
+        chain: list[Any] = []
+        for entry in get_settings().llm_fallback.split(","):
+            provider, _, model = entry.strip().partition(":")
+            if not provider or not model or (provider == rm.provider and model == rm.model):
+                continue
+            prov = self._providers.get(provider)
+            if prov is None:
+                continue
+            key = f"{provider}:{model}"
+            if key not in self._fb_models:
+                self._fb_models[key] = build_chat_model(
+                    provider, model, get_settings().api_key_for(prov["env_key"])
+                )
+            chain.append(self._fb_models[key])
+        return chain
 
     def structured[T: BaseModel](
         self,

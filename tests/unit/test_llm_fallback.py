@@ -46,17 +46,31 @@ def test_ignores_non_rate_limit_errors() -> None:
 
 
 def test_falls_back_when_primary_is_rate_limited() -> None:
-    model = _FallbackModel(_Boom(Exception("429 RESOURCE_EXHAUSTED")), _Echo("from-fallback"))
+    model = _FallbackModel([_Boom(Exception("429 RESOURCE_EXHAUSTED")), _Echo("from-fallback")])
     assert model.invoke([]) == "from-fallback"
 
 
+def test_rolls_through_the_chain_until_one_answers() -> None:
+    # two exhausted free tiers, then a third that has budget → answer comes from the third
+    model = _FallbackModel(
+        [_Boom(Exception("429 PerDay")), _Boom(Exception("Rate limit reached")), _Echo("third")]
+    )
+    assert model.invoke([]) == "third"
+
+
+def test_raises_last_error_when_every_link_is_exhausted() -> None:
+    model = _FallbackModel([_Boom(Exception("429 quota")), _Boom(Exception("Too Many Requests"))])
+    with pytest.raises(Exception, match="Too Many Requests"):
+        model.invoke([])
+
+
 def test_propagates_non_rate_limit_errors() -> None:
-    model = _FallbackModel(_Boom(ValueError("bad schema")), _Echo("unused"))
+    model = _FallbackModel([_Boom(ValueError("bad schema")), _Echo("unused")])
     with pytest.raises(ValueError):
         model.invoke([])
 
 
 def test_bind_tools_preserves_fallback_behaviour() -> None:
-    model = _FallbackModel(_Boom(Exception("quota")), _Echo("from-fallback")).bind_tools([])
+    model = _FallbackModel([_Boom(Exception("quota")), _Echo("from-fallback")]).bind_tools([])
     assert isinstance(model, _FallbackModel)
     assert model.invoke([]) == "from-fallback"
