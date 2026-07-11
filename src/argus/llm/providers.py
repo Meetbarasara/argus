@@ -20,4 +20,8 @@ def build_chat_model(
         from langchain_groq import ChatGroq
 
         return ChatGroq(model=model, api_key=SecretStr(api_key), temperature=temperature)
+    if provider == "cerebras":
+        from langchain_cerebras import ChatCerebras
+
+        return ChatCerebras(model=model, api_key=SecretStr(api_key), temperature=temperature)
     raise LLMError(f"unknown provider: {provider}")

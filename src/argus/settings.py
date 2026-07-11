@@ -15,10 +15,11 @@ class Settings(BaseSettings):
     # LLM providers (03 §6)
     google_api_key: str = ""
     groq_api_key: str = ""
+    cerebras_api_key: str = ""
     llm_mode: Literal["live", "record", "replay", "fake"] = "live"
-    # Opt-in fallback: on a rate-limit/quota error the router retries the call on this model
-    # (``provider:model``), e.g. ``groq:llama-3.3-70b-versatile`` so a Gemini free-tier
-    # exhaustion doesn't halt testing. Empty = off (default; no behaviour change).
+    # Opt-in fallback CHAIN: on a rate-limit/quota error the router retries the call down this
+    # comma-separated list of ``provider:model`` fallbacks in order (each free model has its own
+    # budget, so exhausting one rolls to the next). Empty = off (default; no behaviour change).
     llm_fallback: str = ""
 
     # Behavior toggles
@@ -41,9 +42,11 @@ class Settings(BaseSettings):
     dev_mode: bool = False
 
     def api_key_for(self, env_key: str) -> str:
-        return {"GOOGLE_API_KEY": self.google_api_key, "GROQ_API_KEY": self.groq_api_key}.get(
-            env_key, ""
-        )
+        return {
+            "GOOGLE_API_KEY": self.google_api_key,
+            "GROQ_API_KEY": self.groq_api_key,
+            "CEREBRAS_API_KEY": self.cerebras_api_key,
+        }.get(env_key, "")
 
 
 @lru_cache
