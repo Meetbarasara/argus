@@ -11,3 +11,5 @@ plan
 docs
 .env
 *.md
+# keep README.md in the context — pyproject `readme` needs it for the in-container build
+!README.md

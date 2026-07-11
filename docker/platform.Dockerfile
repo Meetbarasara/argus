@@ -6,7 +6,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 COPY src/ src/
 COPY config/ config/
-COPY alembic.ini ./
+COPY alembic.ini README.md ./
 RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 # bake the embedding model so recall/postmortem run offline + fast at runtime (08 #22)
