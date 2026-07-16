@@ -31,6 +31,7 @@ from argus.graph.verify import rule_ok
 from argus.llm.router import LLMRouter
 
 TERMINAL = {"RESOLVED", "TAKEN_OVER", "FAILED", "CLOSED"}
+PAYMENTSVC_URL = "http://localhost:8002"  # 03 §6 — S2 injects chaos here; must be healthy first
 
 
 @dataclass
@@ -168,6 +169,22 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
             token=token,
         )
 
+    def _clear_nonterminal_incidents() -> None:
+        """Eval hygiene: the API dedupes a new alert into any NON-terminal incident for the same
+        service (03 §4 service-level dedupe). An incident the previous case left mid-flight (its
+        budget expired) would therefore swallow this case's alert and the runner would observe no
+        new incident → a spurious FAIL(no-incident). Close them before injecting."""
+        with session_scope() as session:
+            rows = session.execute(
+                text(
+                    "UPDATE incidents SET status='FAILED', updated_at=now(), "
+                    "status_reason='cleared by eval reset (03 §4 dedupe hygiene)' "
+                    "WHERE status NOT IN ('RESOLVED','TAKEN_OVER','FAILED','CLOSED') RETURNING id"
+                )
+            ).fetchall()
+        if rows:
+            print(f"    cleared {len(rows)} lingering non-terminal incident(s)", flush=True)
+
     def _reset_worldstate() -> None:
         # actuator admin op: rewrite config/{shopapi,paymentsvc}.json to baseline, clear
         # paymentsvc's in-memory chaos, truncate deploy/metric/alert history (07 §2 clean slate)
@@ -179,31 +196,38 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
         except Exception as exc:
             print(f"    reset_worldstate failed (continuing): {exc}", flush=True)
 
-    def _await_ready(timeout: float = 60.0) -> None:
+    def _health_ok(base: str, path: str) -> bool:
+        try:
+            with httpx.Client(base_url=base, timeout=5.0) as c:
+                return c.get(path).status_code == 200
+        except Exception:
+            return False
+
+    def _await_ready(timeout: float = 90.0) -> None:
         deadline = time.time() + timeout
         while time.time() < deadline:
-            try:
-                api_ok = client.get("/api/health").status_code == 200
-            except Exception:
-                api_ok = False
-            try:
-                with httpx.Client(base_url=actuator_url, timeout=5.0) as c:
-                    act_ok = c.get("/health").status_code == 200
-            except Exception:
-                act_ok = False
-            if api_ok and act_ok:
+            if (
+                _health_ok(api_url, "/api/health")
+                and _health_ok(actuator_url, "/health")
+                and _health_ok(PAYMENTSVC_URL, "/health")
+            ):
                 break
             time.sleep(2)
         time.sleep(10)  # warmup: let shopapi rebuild its pool + poller take a clean baseline
 
     def reset() -> None:
-        # 07 §2: clear worldstate to baseline so a prior case's bad deploy/chaos never leaks into
-        # the next, then restart the mutable world containers — shopredis (S1 stops it), shopapi
-        # (reload baseline config + fresh pool), alertwatch (clear the 600s refire cooldown so the
-        # next alert fires) — and wait for the API + actuator to be reachable before injecting.
+        # 07 §2 clean slate, in order: close any lingering non-terminal incident (else the API
+        # dedupes this case's alert into it and no new incident appears); reset worldstate to
+        # baseline so a prior case's bad deploy/chaos can't leak in; restart the mutable world
+        # containers — shopredis (S1 stops it), shopapi (baseline config + fresh pool), paymentsvc
+        # (drops in-memory chaos and heals a wedged S2 target — a 502 on /chaos fails the case),
+        # alertwatch (clears the 600s refire cooldown) — then wait for API + actuator + paymentsvc
+        # health before injecting.
+        _clear_nonterminal_incidents()
         _reset_worldstate()
         subprocess.run(
-            ["docker", "compose", "restart", "shopredis", "shopapi", "alertwatch"], check=False
+            ["docker", "compose", "restart", "shopredis", "shopapi", "paymentsvc", "alertwatch"],
+            check=False,
         )
         _await_ready()
 
