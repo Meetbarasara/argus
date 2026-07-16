@@ -216,14 +216,21 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
         time.sleep(10)  # warmup: let shopapi rebuild its pool + poller take a clean baseline
 
     def reset() -> None:
-        # 07 §2 clean slate, in order: close any lingering non-terminal incident (else the API
-        # dedupes this case's alert into it and no new incident appears); reset worldstate to
-        # baseline so a prior case's bad deploy/chaos can't leak in; restart the mutable world
-        # containers — shopredis (S1 stops it), shopapi (baseline config + fresh pool), paymentsvc
-        # (drops in-memory chaos and heals a wedged S2 target — a 502 on /chaos fails the case),
-        # alertwatch (clears the 600s refire cooldown) — then wait for API + actuator + paymentsvc
-        # health before injecting.
+        # 07 §2 clean slate, in order:
+        # 1. close any lingering non-terminal incident — else the API dedupes this case's alert
+        #    into it (03 §4 service-level dedupe) and no new incident ever appears;
+        # 2. heal any world container that died mid-suite. Compose restart-policy is `no`, so a
+        #    dead actuator STAYS dead and silently breaks every later inject / reset_worldstate /
+        #    recovery-tail (it is the only privileged path). `up -d` is a no-op when running;
+        # 3. reset worldstate to baseline so a prior case's bad deploy/chaos can't leak in;
+        # 4. restart the mutable world containers — shopredis (S1 stops it), shopapi (baseline
+        #    config + fresh pool), paymentsvc (drops in-memory chaos, heals a wedged S2 target),
+        #    alertwatch (clears the 600s refire cooldown);
+        # 5. wait for API + actuator + paymentsvc health before injecting.
         _clear_nonterminal_incidents()
+        subprocess.run(
+            ["docker", "compose", "up", "-d", "actuator", "poller", "loadgen"], check=False
+        )
         _reset_worldstate()
         subprocess.run(
             ["docker", "compose", "restart", "shopredis", "shopapi", "paymentsvc", "alertwatch"],
