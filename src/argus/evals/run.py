@@ -92,7 +92,11 @@ def run_case(case_id: str, platform: Platform, router: LLMRouter, run_id: str) -
         _persist_case(run_id, case_id, None, None)
         return "FAIL(no-incident)"
 
-    budget = float(sc.get("budgets", {}).get("max_wall_seconds", 420)) + 60.0
+    # The scenario's max_wall_seconds bounds the graph RUN; a policy_sim/human approval then
+    # RESUMES the graph (a second invocation costing roughly as much again), so waiting only
+    # max_wall+60 gives up mid-resume — which both mis-grades this case and leaves the worker
+    # busy, starving the NEXT case's incident of its worker slot (it graded 0 llm_calls).
+    budget = float(sc.get("budgets", {}).get("max_wall_seconds", 420)) + 300.0
     incident = platform.await_terminal(incident_id, budget)
     alert = incident.get("alert", {})
     grade = grade_case(router, incident, alert, expected, recovered=platform.recovered(alert))
@@ -225,7 +229,9 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
         # 3. reset worldstate to baseline so a prior case's bad deploy/chaos can't leak in;
         # 4. restart the mutable world containers — shopredis (S1 stops it), shopapi (baseline
         #    config + fresh pool), paymentsvc (drops in-memory chaos, heals a wedged S2 target),
-        #    alertwatch (clears the 600s refire cooldown);
+        #    alertwatch (clears the 600s refire cooldown), and the worker (aborts any task still
+        #    grinding on the previous case, which would otherwise hold the single worker slot and
+        #    starve this case's incident — it would grade with 0 llm_calls);
         # 5. wait for API + actuator + paymentsvc health before injecting.
         _clear_nonterminal_incidents()
         subprocess.run(
@@ -233,7 +239,16 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
         )
         _reset_worldstate()
         subprocess.run(
-            ["docker", "compose", "restart", "shopredis", "shopapi", "paymentsvc", "alertwatch"],
+            [
+                "docker",
+                "compose",
+                "restart",
+                "shopredis",
+                "shopapi",
+                "paymentsvc",
+                "alertwatch",
+                "worker",
+            ],
             check=False,
         )
         _await_ready()

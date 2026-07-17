@@ -132,9 +132,16 @@ def _auto_decide_and_resume(incident_id: str) -> None:
         approval.decided_by = "policy_sim"
         approval.decided_at = datetime.now(UTC)
         if approval.level == "TAKE_OVER":
+            # Record the graph's OWN hypothesis as the take-over root cause — a human taking over
+            # writes down what the investigation concluded. A placeholder here would overwrite
+            # incidents.root_cause and blind anything reading it (notably the eval judge, which
+            # grades that column) to the agent's actual diagnosis, scoring RCA wrong on every
+            # take-over. Fall back only when no hypothesis was formed.
+            hypothesis = (approval.context or {}).get("hypothesis") or {}
             approval.modified_action = {
-                "root_cause": "auto-resolved in eval mode (policy_sim take-over)",
-                "action_taken": "escalation recorded; no automated remediation",
+                "root_cause": hypothesis.get("root_cause")
+                or "no confident hypothesis formed before take-over",
+                "action_taken": "escalation recorded; no automated remediation (policy_sim)",
             }
         session.add(approval)
     resume_incident.delay(incident_id)

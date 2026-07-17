@@ -1,64 +1,48 @@
 # Argus Evaluation Report
 
-run `a6313997` · 2026-07-10 · commit `5deb2ef` · supervisor=gemini-2.5-flash · memory=off · N=15
-
-> ⚠️ **This run is quota-degraded — it measures the free-tier LLM quota, not Argus.** Both
-> free-tier providers were exhausted mid-run: Gemini's daily request cap (~20/day) was spent
-> by the pre-run health smoke + harness validations, and Groq — bearing the doubled load once
-> every Gemini-role call fell back to it — hit its per-minute token limit (429). So **10 of 15
-> cases failed on the *first* LLM call** (0–1 `calls` below), before any investigation ran.
->
-> **The harness itself is validated end-to-end.** The same **S3-v1** case graded **PASS**
-> (RCA ✓ · remediation ✓ · recovery ✓ · escalation ✓) in isolation ~30 min earlier, while
-> Gemini still had quota; M05–M07 proved live autonomous S1 resolution, the HITL approve→resolve
-> flow, and a **54 % memory-lift** on repeats. A clean full-suite headline + memory ablation will
-> be re-run on fresh Gemini quota (per plan/08 #27) and will regenerate this report.
->
-> The one quota-independent signal here is **S1-v2 (PARTIAL)**: RCA correct (redis down) but the
-> two decoy deploys led the change-analyst to propose a rollback and over-escalate instead of
-> restarting the cache — a genuine change-correlation-precision finding.
+run `ef2bebc0` · 2026-07-17 · commit `26fc545` · supervisor=cerebras:gpt-oss-120b · memory=off · N=15
 
 ## Headline
-- **RCA accuracy:** 3/15 (20%)
+- **RCA accuracy:** 2/15 (13%)
 - **Remediation correct:** 3/15 (20%)
 - **Recovery:** 2/3 of correctly-remediated (67%)
-- **Escalation:** precision 80% / recall 36%
-- **Efficiency:** median MTTR 133s · median 0 LLM calls · median cost $0.0000
+- **Escalation:** precision 89% / recall 73%
+- **Efficiency:** median MTTR 228.5s · median 9 LLM calls · median cost $0.0057
 - **Outcome:** 2/15 PASS
 
 ## Per-case
 | case | outcome | rca | remediation | recovered | escalation (exp→act) | calls | mttr |
 |---|---|---|---|---|---|---|---|
-| S1-v1 | PASS | ✅ | ✅ | ✅ | NOTIFY→NOTIFY ✅ | 13 | 78s |
-| S1-v2 | PARTIAL | ✅ | ❌ | ✅ | NOTIFY→APPROVE_ACTION ❌ | 14 | 133s |
-| S1-v3 | PASS | ✅ | ✅ | ✅ | NOTIFY→NOTIFY ✅ | 10 | 133s |
-| S2-v1 | FAIL | ❌ | ✅ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 17 | — |
-| S2-v2 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→None ❌ | 0 | — |
+| S1-v1 | PASS | ✅ | ✅ | ✅ | NOTIFY→NOTIFY ✅ | 16 | 37s |
+| S1-v2 | FAIL | ❌ | ❌ | ❌ | NOTIFY→TAKE_OVER ❌ | 26 | — |
+| S1-v3 | FAIL | ❌ | ❌ | ❌ | None→None ❌ | 0 | — |
+| S2-v1 | FAIL | ❌ | ❌ | ✅ | APPROVE_ACTION→None ❌ | 0 | — |
+| S2-v2 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 8 | — |
 | S2-v3 | FAIL | ❌ | ❌ | ❌ | None→None ❌ | 0 | — |
-| S3-v1 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 1 | — |
-| S3-v2 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→None ❌ | 0 | — |
-| S3-v3 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→None ❌ | 0 | — |
+| S3-v1 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 13 | — |
+| S3-v2 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 21 | — |
+| S3-v3 | PASS | ✅ | ✅ | ✅ | APPROVE_ACTION→APPROVE_ACTION ✅ | 21 | 420s |
 | S4-v1 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→None ❌ | 0 | — |
 | S4-v2 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→None ❌ | 0 | — |
-| S4-v3 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 1 | — |
-| S5-v1 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→None ❌ | 0 | — |
-| S5-v2 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→None ❌ | 0 | — |
-| S5-v3 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 1 | — |
+| S4-v3 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 16 | — |
+| S5-v1 | FAIL | ❌ | ✅ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 18 | — |
+| S5-v2 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 5 | — |
+| S5-v3 | FAIL | ❌ | ❌ | ❌ | APPROVE_ACTION→TAKE_OVER ❌ | 9 | — |
 
 ## Failures
-- **S1-v2** (PARTIAL): diagnosis “Redis dependency being down for shopapi service” · judge: The system diagnosis correctly identifies the causal mechanism (Redis dependency being down) and the same service (shopapi) as the expected root cause. · incident `15023c01`
-- **S2-v1** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The system diagnosis does not identify the causal mechanism (paymentsvc latency) and only mentions the affected service (shopapi) without explaining the root cause of the issue. · incident `6e285f8c`
-- **S2-v2** (FAIL): diagnosis “—” · judge: keyword-fallback · incident `f4db703f`
+- **S1-v2** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The system diagnosis describes an auto-resolution process ('policy_sim take-over') rather than identifying the actual root cause, which was 'shopredis' being down and breaking 'shopapi's redis cache dependency. The causal mechanism is completely different. · incident `b631abe5`
+- **S1-v3** (FAIL): diagnosis “—” · judge: — · incident ``
+- **S2-v1** (FAIL): diagnosis “ShopAPI is unable to reach its dependencies due to a transient network/connectivity issue,” · judge: The system diagnosis provided no causal mechanism. The expected root cause identified 'paymentsvc latency spiked' as the causal mechanism and 'paymentsvc' as the primary causal service, neither of which were present in the diagnosis. · incident `8c99090e`
+- **S2-v2** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The system diagnosis describes the resolution method ('auto-resolved in eval mode') rather than the actual technical root cause of the incident (paymentsvc latency spike). While it correctly identifies 'shopapi' as an affected service, it misses the causal mechanism and the upstream service ('paymentsvc') entirely. · incident `0d796857`
 - **S2-v3** (FAIL): diagnosis “—” · judge: — · incident ``
-- **S3-v1** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The system diagnosis does not identify the causal mechanism of the deploy changing the payment_url to an unreachable endpoint, only the affected service is correct. · incident `03747209`
-- **S3-v2** (FAIL): diagnosis “—” · judge: System diagnosis is empty and does not identify the causal mechanism or the incorrect payment_url endpoint. · incident `2d441d83`
-- **S3-v3** (FAIL): diagnosis “—” · judge: System diagnosis is empty and does not identify the causal mechanism or the incorrect payment_url endpoint. · incident `425aa2f5`
-- **S4-v1** (FAIL): diagnosis “—” · judge: System diagnosis did not identify the causal mechanism of the deploy shrinking shopapi's db pool, exhausting connections under load. · incident `afb3f4c9`
-- **S4-v2** (FAIL): diagnosis “—” · judge: The system diagnosis did not identify a causal mechanism for the incident. · incident `2da3430f`
-- **S4-v3** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: keyword-fallback · incident `d5e938e9`
-- **S5-v1** (FAIL): diagnosis “—” · judge: The system diagnosis does not identify a causal mechanism, only the affected service. · incident `d0f378ac`
-- **S5-v2** (FAIL): diagnosis “—” · judge: The system diagnosis did not identify a causal mechanism or mention the broken feature flag (recs_v2) as the root cause of the 500s on shopapi. · incident `5f68250a`
-- **S5-v3** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: keyword-fallback · incident `320bfd77`
+- **S3-v1** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The diagnosis correctly identifies the affected service (shopapi) but fails to identify the causal mechanism. The system diagnosis describes how the issue was resolved ('auto-resolved in eval mode'), not the root cause of the problem (a deploy changing a URL to an unreachable endpoint). · incident `07dd742f`
+- **S3-v2** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The diagnosis correctly identifies the affected service (shopapi) but fails to identify the causal mechanism. The system diagnosis describes how the issue was resolved ('auto-resolved in eval mode'), not the root cause of the problem (a deploy changing a URL to an unreachable endpoint). · incident `3709709c`
+- **S4-v1** (FAIL): diagnosis “—” · judge: keyword-fallback · incident `fa751db4`
+- **S4-v2** (FAIL): diagnosis “—” · judge: The system provided no diagnosis for the root cause, only identifying the affected service. The expected root cause details a specific causal mechanism (deploy shrinking db pool, exhausting connections). · incident `c20e2132`
+- **S4-v3** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The system diagnosis correctly identifies the affected service (shopapi) but fails to identify the causal mechanism. The expected root cause points to a deploy shrinking the db pool leading to connection exhaustion, whereas the diagnosis describes how the issue was resolved ('auto-resolved in eval mode (policy_sim take-over)') rather than the underlying problem itself. · incident `d359fc77`
+- **S5-v1** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The system diagnosis correctly identified the affected service (shopapi) but failed to identify the causal mechanism. The expected cause was a deploy enabling a broken feature flag, whereas the system diagnosis described how the issue was handled (auto-resolved in eval mode) rather than its root cause. · incident `cdf22901`
+- **S5-v2** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The diagnosis correctly identifies the affected service (shopapi) but completely misses the causal mechanism. The expected cause is a broken feature flag enabled by a deploy, whereas the diagnosis describes an auto-resolution process ('auto-resolved in eval mode (policy_sim take-over)') rather than the root cause of the incident itself. · incident `cdefbec0`
+- **S5-v3** (FAIL): diagnosis “auto-resolved in eval mode (policy_sim take-over)” · judge: The diagnosis correctly identifies the affected service (shopapi) but completely misses the causal mechanism. The expected cause is a broken feature flag enabled by a deploy, whereas the diagnosis describes an auto-resolution process ('auto-resolved in eval mode (policy_sim take-over)') rather than the root cause of the incident itself. · incident `39fb504c`
 
 ## Method note
 - Suite: 15 seeded-fault cases (S1–S5 × v1 clean / v2 decoys / v3 noise), versioned in `evals/scenarios/`.
@@ -74,3 +58,13 @@ Repeat-fault (v2) cases, memory ON vs OFF — each condition wipes `memories` th
 | S1-v2 | 0 | 0 | +0 | — | — | ❌ | ❌ |
 
 **Aggregate:** insufficient data (no OFF-condition calls recorded).
+
+## Ablation: supervisor model
+
+Same suite, memory OFF, supervisor model swapped (one flag) — the architecture is model-agnostic. List-price cost.
+
+| supervisor | RCA | remediation | recovery | esc P/R | median calls | median MTTR | median cost |
+|---|---|---|---|---|---|---|---|
+| cerebras:gpt-oss-120b | 2/15 | 3/15 | 2/3 | 89%/73% | 9 | 228.5s | $0.0057 |
+| gemini-2.5-flash | 1/4 | 1/4 | 1/1 | 0%/0% | 6.0 | 113s | $0.0043 |
+| gemini-2.5-flash | 3/15 | 3/15 | 2/3 | 80%/36% | 0 | 133s | $0.0000 |
