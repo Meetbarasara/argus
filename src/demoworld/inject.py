@@ -55,6 +55,10 @@ def _benign_restart(client: httpx.Client) -> dict[str, Any]:
     # a red-herring restart in the audit log (v3 noise) — benign, fixes nothing
     resp = client.post("/restart", json={"service": "paymentsvc"})
     resp.raise_for_status()
+    # Let it come back before the fault lands: S2's fault is chaos ON paymentsvc, and firing
+    # /chaos at a still-restarting target makes the actuator's proxy return 502 and errors the
+    # whole case (S2-v3 pairs benign_restart with payment_latency).
+    time.sleep(12)
     return dict(resp.json())
 
 
