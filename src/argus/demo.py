@@ -1,9 +1,10 @@
 """``python -m argus.demo`` — the guided 5-minute storyline (01 §demo, M12).
 
-Resets the world + memories, injects **S3** (`bad_deploy_env`), and narrates the
-investigate → review → risk-gate → approve → remediate → learn arc; then injects S3 a
-second time to show the **memory fast-path** (fewer LLM calls / shorter MTTR), printed as
-a side-by-side comparison. Ends by pointing at the dashboard + eval panel.
+Resets the world + memories, injects **S4** (`db_pool_exhaustion` — a bad deploy that shrinks
+shopapi's DB pool; an APPROVE_ACTION rollback the free-tier model handles reliably), and narrates
+the investigate → review → risk-gate → approve → remediate → learn arc; then injects the **same**
+fault a second time to show the **memory fast-path** (fewer LLM calls / shorter MTTR), printed as a
+side-by-side comparison. Ends by pointing at the dashboard + eval panel.
 
     python -m argus.demo            # interactive: pauses for you to Approve in the UI
     python -m argus.demo --auto     # zero-interaction (AUTO_APPROVE=policy_sim) — recording-safe
@@ -23,7 +24,7 @@ import httpx
 
 from argus.evals.run import Platform, _real_platform, wipe_memories
 
-S3 = "bad_deploy_env"  # the demo scenario (01 §demo beat 2)
+S4 = "db_pool_exhaustion"  # the demo scenario — an APPROVE_ACTION deploy the free model handles
 TERMINAL = {"RESOLVED", "TAKEN_OVER", "FAILED", "CLOSED"}
 
 
@@ -79,11 +80,11 @@ def _one_incident(
     approve: Any,
     label: str,
 ) -> dict[str, Any]:
-    """Inject S3 once, narrate through to a terminal status, return the final incident."""
+    """Inject S4 once, narrate through to a terminal status, return the final incident."""
     platform.reset()
     since = datetime.now(UTC).isoformat()
-    _say(f"⚡ Injecting {label}  (deploy repoints shopapi's checkout at a dead payment URL)…")
-    platform.inject(S3, params)
+    _say(f"⚡ Injecting {label}  (a deploy shrank shopapi's DB pool → pool timeouts under load)…")
+    platform.inject(S4, params)
 
     incident_id = platform.await_incident(since, 120.0)
     if incident_id is None:
@@ -116,14 +117,12 @@ def run_demo(platform: Platform, *, auto: bool, approve: Any, ui_url: str) -> di
     _say(f"A quiet e-commerce world is running. Dashboard: {ui_url}", 1.5)
 
     _say("\n── Act 1 · a bad deploy, caught and rolled back ──")
-    first = _one_incident(platform, {}, auto=auto, approve=approve, label="S3")
+    first = _one_incident(platform, {}, auto=auto, approve=approve, label="S4")
     if first.get("status") == "RESOLVED":
         _say("📝 A postmortem memory was written — it'll make the next one faster.", 1.5)
 
     _say("\n── Act 2 · the same fault recurs — memory pays off ──")
-    second = _one_incident(
-        platform, {"decoy_deploys": 1}, auto=auto, approve=approve, label="S3 again (variant)"
-    )
+    second = _one_incident(platform, {}, auto=auto, approve=approve, label="S4 again (same fault)")
 
     if first and second:
         print(comparison_table(first, second), flush=True)

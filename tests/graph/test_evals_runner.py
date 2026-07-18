@@ -108,6 +108,47 @@ def test_missing_incident_records_a_fail() -> None:
     assert c.outcome == "FAIL" and c.incident_id is None
 
 
+def test_multiple_incidents_grades_the_investigated_one() -> None:
+    # A case fired two incidents (an alert re-fire + the service-dedupe gap): a 0-call FAILED
+    # straggler that await_incident locked onto, and the real 14-call RESOLVED one. run_case must
+    # re-select and grade the investigated incident → PASS (not the straggler → FAIL). Regression
+    # for the "0 llm_calls" artifact (S1-v3 / S2-v2, where the primary incident actually resolved).
+    real_id, strag_id = str(uuid.uuid4()), str(uuid.uuid4())
+    real = _incident()
+    real["id"] = real_id
+    real["llm_calls"] = 14
+    straggler: dict[str, Any] = {
+        "id": strag_id,
+        "status": "FAILED",
+        "service": "shopapi",
+        "llm_calls": 0,
+        "escalation_level": None,
+        "root_cause": None,
+        "mttr_seconds": None,
+        "alert": real["alert"],
+    }
+    details = {real["id"]: real, straggler["id"]: straggler}
+    summaries = [
+        {"id": strag_id, "service": "shopapi", "llm_calls": 0, "created_at": "2026-07-18T10:05:00"},
+        {"id": real_id, "service": "shopapi", "llm_calls": 14, "created_at": "2026-07-18T10:01:00"},
+    ]
+    platform = Platform(
+        inject=lambda _k, _p: None,
+        reset=lambda: None,
+        await_incident=lambda _s, _t: straggler["id"],  # the bug: locks onto the newest straggler
+        fetch_incident=lambda i: details[i],
+        await_terminal=lambda i, _t: details[i],
+        recovered=lambda _a: True,
+        list_incidents_since=lambda _s: summaries,
+    )
+    run_id = _new_run()
+    outcome = run_case("S1-v1", platform, _JudgeRouter(), run_id)  # type: ignore[arg-type]
+    assert outcome == "PASS"
+    with session_scope() as session:
+        c = session.scalars(select(EvalCase).where(EvalCase.run_id == run_id)).one()
+    assert c.incident_id == real_id and c.llm_calls == 14  # graded the investigated incident
+
+
 def test_resume_skips_already_graded_cases() -> None:
     inc = _incident()
     run_id = _new_run()

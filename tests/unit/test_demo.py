@@ -56,4 +56,4 @@ def test_run_demo_auto_runs_both_acts(monkeypatch: pytest.MonkeyPatch) -> None:
     out = run_demo(platform, auto=True, approve=lambda _i: None, ui_url="http://ui")
     assert out["first"]["status"] == "RESOLVED"
     assert out["second"]["status"] == "RESOLVED"
-    assert seen == ["bad_deploy_env", "bad_deploy_env"]  # S3 injected in both acts
+    assert seen == ["db_pool_exhaustion", "db_pool_exhaustion"]  # S4 injected in both acts

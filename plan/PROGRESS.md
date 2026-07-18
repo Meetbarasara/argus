@@ -37,6 +37,25 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 - `pytest -m world` → 12 passed
 -->
 
+### Post-M11 hardening — 2026-07-19 (#3: eval incident-selection fix + demo→S4)
+- **Root-caused the "0 llm_calls" artifact — it was a false FAIL, not a metrics slip.** A case can fire
+  SEVERAL incidents (alert re-fires + the service-level dedupe gap), and `await_incident` locked onto the
+  *newest* — sometimes a 0-call straggler — while the agent's real investigation ran on a sibling. DB
+  proof: S1-v3's graded `b4a7b8a2` had siblings `b3f77d92`/`31642d46` **RESOLVED (14 calls)**; S2-v2's
+  sibling `22bc8aa5` **RESOLVED (10)**. So the 2026-07-18 **7/15 is an undercount** (S1-v3 + S2-v2
+  primaries actually resolved). A confirmed corrected headline needs a live re-run (quota).
+- **Fix (`evals/run.py`):** `select_case_incident` — among a case's incidents, grade the most-investigated
+  (max `llm_calls`, tie-break newest); effort-based, NOT outcome-biased (a big FAILED outranks a small
+  RESOLVED), so it can't inflate the pass rate. Wired via a new defaulted `Platform.list_incidents_since`
+  → single-incident cases (the common path) are unchanged. +6 unit tests (`test_eval_selection.py`) + 1
+  graph integration test (multi-incident → grades the investigated one).
+- **Demo repointed S3→S4 (`demo.py`):** S3 (`bad_deploy_env`) is the one scenario the free gpt-oss-120b
+  reliably fails; S4 (`db_pool_exhaustion`) is the same APPROVE_ACTION→rollback arc but one it handles.
+  Act 2 now re-injects the **identical** fault (was +1 decoy) so the memory fast-path actually fires.
+  `test_demo` updated. Makes `demo --auto` a dependable recording without a paid model.
+- **Gate:** `poe verify` **177** (+6) + `poe test-graph` **24** (+1), both green. Host-side only (no image
+  rebuild). Well-behaved single-incident cases unchanged.
+
 ### M11 — 2026-07-18 (CLEAN headline eval run + memory ablation — DONE)
 - **Clean 15-case baseline** (`run 41cd9251`, live, supervisor `cerebras:gpt-oss-120b`, memory off):
   `uv run python -m argus.evals.run --suite all --memory off --supervisor-model cerebras:gpt-oss-120b`

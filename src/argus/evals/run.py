@@ -34,6 +34,12 @@ TERMINAL = {"RESOLVED", "TAKEN_OVER", "FAILED", "CLOSED"}
 PAYMENTSVC_URL = "http://localhost:8002"  # 03 §6 — S2 injects chaos here; must be healthy first
 
 
+def _no_incidents(_since: str) -> list[dict[str, Any]]:
+    """Default for the optional ``list_incidents_since`` — makes the multi-incident re-selection a
+    no-op, so existing 6-field ``Platform`` stubs keep grading exactly one incident."""
+    return []
+
+
 @dataclass
 class Platform:
     """Injectable platform interactions (real in ``main``, stubbed in tests)."""
@@ -44,6 +50,24 @@ class Platform:
     fetch_incident: Callable[[str], dict[str, Any]]
     await_terminal: Callable[[str, float], dict[str, Any]]  # (incident_id, timeout) -> incident
     recovered: Callable[[dict[str, Any]], bool]  # (alert) -> recovery re-derived from metrics
+    # A case can spawn several incidents (alert re-fires + the dedupe gap); list those created
+    # since a timestamp so run_case grades the one actually investigated, not a straggler.
+    list_incidents_since: Callable[[str], list[dict[str, Any]]] = _no_incidents
+
+
+def select_case_incident(
+    candidates: list[dict[str, Any]], current: dict[str, Any]
+) -> dict[str, Any]:
+    """A case can fire several incidents (alert re-fires + the service-level dedupe gap), so
+    ``await_incident``'s "newest" pick can be a 0-call straggler rather than the incident the agent
+    actually investigated. Among the candidates, choose the most-investigated (max ``llm_calls``,
+    tie-broken by most-recent ``created_at``) — an effort-based choice, not an outcome-biased one.
+    Falls back to ``current`` when there's nothing better, so the common single-incident case is
+    unchanged. Pure → unit-tested."""
+    pool = [c for c in (candidates or [current]) if c.get("id")]
+    if not pool:
+        return current
+    return max(pool, key=lambda c: (int(c.get("llm_calls") or 0), str(c.get("created_at") or "")))
 
 
 # --- persistence ---------------------------------------------------------------------
@@ -98,6 +122,15 @@ def run_case(case_id: str, platform: Platform, router: LLMRouter, run_id: str) -
     # busy, starving the NEXT case's incident of its worker slot (it graded 0 llm_calls).
     budget = float(sc.get("budgets", {}).get("max_wall_seconds", 420)) + 300.0
     incident = platform.await_terminal(incident_id, budget)
+    # A case can fire several incidents (alert re-fires + the dedupe gap): await_incident may have
+    # locked onto a 0-call straggler, not the one the agent investigated. Re-select the most-
+    # investigated incident for this service and grade THAT (07 §3). Single-incident cases are
+    # unaffected (candidates == [current]).
+    service = str(incident.get("service") or "")
+    candidates = [c for c in platform.list_incidents_since(since) if c.get("service") == service]
+    best = select_case_incident(candidates, incident)
+    if best.get("id") and best.get("id") != incident.get("id"):
+        incident = platform.await_terminal(str(best["id"]), 120.0)
     alert = incident.get("alert", {})
     grade = grade_case(router, incident, alert, expected, recovered=platform.recovered(alert))
     _persist_case(run_id, case_id, incident, grade)
@@ -287,7 +320,21 @@ def _real_platform(api_url: str, actuator_url: str, token: str) -> Platform:
                 return False
             time.sleep(8)
 
-    return Platform(do_inject, reset, await_incident, fetch_incident, await_terminal, recovered)
+    def list_incidents_since(since_iso: str) -> list[dict[str, Any]]:
+        """This case's incidents (created since ``since_iso``, newest-first list), with the
+        ``llm_calls``/``service``/``status`` summary run_case needs to pick the real one."""
+        incidents = client.get("/api/incidents", params={"limit": 50}).json()
+        return [i for i in incidents if i.get("created_at", "") >= since_iso]
+
+    return Platform(
+        do_inject,
+        reset,
+        await_incident,
+        fetch_incident,
+        await_terminal,
+        recovered,
+        list_incidents_since,
+    )
 
 
 def _recovered_via_tail(alert: dict[str, Any], actuator_url: str, token: str) -> bool:
