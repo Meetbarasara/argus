@@ -5,3 +5,9 @@ gemini:
 groq:
   llama-3.3-70b-versatile: {in_per_mtok: 0.59, out_per_mtok: 0.79}
   llama-3.1-8b-instant:    {in_per_mtok: 0.05, out_per_mtok: 0.08}
+cerebras:
+  # Cerebras bills by throughput/subscription, not per-token; these are list-price
+  # ESTIMATES (OpenRouter-class) so the dashboard shows a figure. Real spend is $0 on the
+  # free tier. Verify/update at M03.
+  gpt-oss-120b: {in_per_mtok: 0.15, out_per_mtok: 0.60}   # est.
+  zai-glm-4.7:  {in_per_mtok: 0.60, out_per_mtok: 2.00}   # est.

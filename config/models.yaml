@@ -1,14 +1,27 @@
 # Role -> model routing (03 §3). Model ids are defaults; M03 verifies live ids.
+#
+# Routing rationale (2026-07-19): the free-tier problem is Gemini's DAILY cap, which was
+# being exhausted mid-eval because the high-volume roles (supervisor + reviewer) ran on it.
+# Fix: move the volume OFF Gemini. Gemini now runs the JUDGE only (~1 call/case) — trivial
+# against its daily budget. Cerebras (generous daily budget, very fast) carries the
+# supervisor and the heavy reasoning; Groq carries the cheap specialist fan-out. Verified
+# available on this account 2026-07-19: cerebras = {gpt-oss-120b, zai-glm-4.7, gemma-4-31b},
+# groq also has qwen/qwen3.6-27b as an alternate reasoner.
+#
+# RESILIENCE: set LLM_FALLBACK in .env so a rate-limited (429) primary rolls to a still-
+# budgeted model. Recommended chain (also keeps the judge alive if Gemini's daily cap is hit,
+# instead of silently dropping to the keyword heuristic):
+#   LLM_FALLBACK=cerebras:gpt-oss-120b,groq:llama-3.3-70b-versatile
 providers:
   gemini:   {env_key: GOOGLE_API_KEY,   rpm: 9}    # keep 1 below the published free limit
   groq:     {env_key: GROQ_API_KEY,     rpm: 25}
   cerebras: {env_key: CEREBRAS_API_KEY, rpm: 25}   # free tier: generous daily budget, very fast
 
 roles:   # every role used by the platform must appear here
-  supervisor:      {provider: gemini, model: gemini-2.5-flash}
-  reviewer:        {provider: gemini, model: gemini-2.5-flash}
-  log_analyst:     {provider: groq,   model: llama-3.3-70b-versatile}
-  metrics_analyst: {provider: groq,   model: llama-3.3-70b-versatile}
-  change_analyst:  {provider: groq,   model: llama-3.3-70b-versatile}
-  memory_writer:   {provider: groq,   model: llama-3.3-70b-versatile}
-  judge:           {provider: gemini, model: gemini-2.5-flash}
+  supervisor:      {provider: cerebras, model: gpt-oss-120b}          # off Gemini; proven RCA driver (M11 7/15)
+  reviewer:        {provider: cerebras, model: zai-glm-4.7}           # off Gemini; GLM-4.7 = heterogeneous 2nd opinion
+  log_analyst:     {provider: groq,     model: llama-3.3-70b-versatile}
+  metrics_analyst: {provider: groq,     model: llama-3.3-70b-versatile}
+  change_analyst:  {provider: cerebras, model: zai-glm-4.7}           # reasoning upgrade for the S3 change-correlation gap
+  memory_writer:   {provider: groq,     model: llama-3.3-70b-versatile}
+  judge:           {provider: gemini,   model: gemini-2.5-flash}      # LOW volume (1/case) -> stays inside the daily cap
