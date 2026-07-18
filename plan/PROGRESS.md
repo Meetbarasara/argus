@@ -18,7 +18,7 @@
 | M08 | Parallelism & resilience | done | ✅ 2026-07-06 (clean; verify 119 + graph 12) | ✅ 2026-07-06 verify (133) + graph 19 (chaos a–e, seq fallback, span-overlap) + live S1 spans overlap 1.876s + world 8/8 | 6906152 | Send-API fan-out + 2-wave deps; resilience degrades to conf-0; budget via spec_llm_calls reducer |
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
-| M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated (live S3-v1 PASS); headline run quota-degraded (both free tiers exhausted) → clean re-run on fresh Gemini quota (08 #27, user-approved) |
+| M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated; **clean headline run 2026-07-18** (7/15 PASS, cerebras:gpt-oss-120b supervisor, recovery 8/8) + memory ablation → EVALUATION.md regenerated (see 2026-07-18 log) |
 | M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done (demo.py + tests, README, INTERVIEW_NOTES, LICENSE, pyproject readme); runtime gate (`demo --auto` run, `down -v` clean-boot) + `docs/img/` screenshots + clean EVALUATION.md numbers deferred to fresh Gemini quota + a browser |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
@@ -36,6 +36,30 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   worldstate/alerts/sent.jsonl after 41s; shopapi log shows 37 ConnectError lines
 - `pytest -m world` → 12 passed
 -->
+
+### M11 — 2026-07-18 (CLEAN headline eval run + memory ablation — DONE)
+- **Clean 15-case baseline** (`run 41cd9251`, live, supervisor `cerebras:gpt-oss-120b`, memory off):
+  `uv run python -m argus.evals.run --suite all --memory off --supervisor-model cerebras:gpt-oss-120b`
+  → **7/15 PASS** · RCA 7/15 (47%) · remediation 8/15 · **recovery 8/8 (100%)** · escalation
+  precision 91% / recall 83% · median MTTR 253.5s · 16 calls · $0.0164. **Supersedes** the 2026-07-10
+  quota-degraded 2/15 (08 #27 clean re-run — no fresh Gemini needed; the Cerebras fallback chain did it).
+- **Genuine finding (not tuned away):** S3 (a deploy broke `payment_url` → checkout 502s) fails all
+  three variants — full 18–28-call investigations that misread the symptom as a paymentsvc dependency
+  outage / monitoring glitch and escalate to TAKE_OVER (fail-closed, wrong RCA). Change-correlation-
+  precision gap in gpt-oss-120b; strong on S1/S2/S4/S5 (7/11 non-artifact). See EVALUATION.md §Failures.
+- **Run conditions:** free-tier rate-limited (Gemini daily-exhausted; cerebras/groq per-minute 429s,
+  cerebras auto-retries ~56 s). 3 cases (S1-v3/S2-v2/S5-v1) recorded 0 `llm_calls` — a dedupe/counter
+  metrics artifact (2 of 3 still diagnosed); **7/15 is a floor.** Actuator stayed 200 the whole ~5 h run
+  (it survived a mid-run PC sleep because the runner is nohup-detached + results persist in Postgres).
+- **Memory ablation** (`--repeat-for-memory --suite S1`; re-run clean after a rate-degraded 1st attempt:
+  ON=`de400216` OFF=`cf7fe938`): all 4 cases RESOLVED; repeat S1-v2 recalled the memory
+  (`memory_used=True`) but **15 ON vs 12 OFF calls = no fast-path lift** — v1(clean)→v2(+2 decoys) is
+  below the 0.92 similarity threshold, so memory was context not a shortcut. Same-fault fast-path lift
+  stays proven at M07 (13→6, 54%). Reported honestly, not re-run to chase a positive number.
+- **EVALUATION.md regenerated** (`argus.evals.report`) + hand-augmented (run-conditions caveat, memory
+  interpretation, S3 §Failures synthesis). The auto supervisor-model table was **removed** — its only
+  gemini comparators are quota-degraded 0–6-call runs (unfair). `.env` restored to live/off/true
+  (supervisor override dropped); `/api/health` echo confirms.
 
 ### M12 — 2026-07-10 (demo & docs — writing DONE; runtime gate deferred to fresh quota)
 - **Written + verify-green (169 unit, +3 demo):** `src/argus/demo.py` — the guided 7-beat
@@ -482,6 +506,7 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
 | 2026-07-10 | M11: runner `reset()` now calls actuator `/admin/reset_worldstate` before injecting + waits for API/actuator health; `set_platform_env` verifies the `/api/health` config echo; UTF-8 stdout | 07 §2 requires a per-case worldstate clear (a prior case's bad deploy / in-memory chaos leaked into the next) + the health-echo verify; Windows cp1252 crashed the run on the →/Δ/≥ printed by the lift table | Correct per-case isolation; no schema/shape change |
 | 2026-07-10 | M11: headline eval run quota-degraded (2/15) — both free-tier LLM providers exhausted (Gemini daily cap + Groq per-minute TPM under the doubled fallback load); clean full-suite + ablation re-run **deferred to fresh quota** | 08 #27 (daily caps block the run → finish next day rather than degrade); user-approved "finish now, re-run clean later". Harness validated live (S3-v1 PASS) | EVALUATION.md committed with a prominent quota caveat + honest §Failures; regenerates clean on fresh quota. Gates mechanically green |
 | 2026-07-10 | M11 session: Docker Desktop was wedged (`docker-desktop` WSL2 distro Stopped while Docker Desktop.exe ran → `docker info` hangs); recovered via `wsl --shutdown` + relaunch + `up -d --wait` | environment (not code) — the recurring "Docker keeps crashing" root cause | Recorded in [[argus-live-gate-ops]]; no code impact |
+| 2026-07-18 | M11 clean run: forced supervisor to `cerebras:gpt-oss-120b`; ran the S1 memory ablation twice (1st rate-degraded → "insufficient data"); **removed** the auto supervisor-model table from EVALUATION.md | Gemini free tier is per-DAY useless (~1 case); the 1st ablation's seed didn't RESOLVE under 429s so no memory was seeded; the only gemini `--suite all` comparators are quota-degraded (0–6 calls) → an unfair "model comparison" | Headline + ablation on Cerebras; ablation 2nd run clean (v1→v2 no-lift, reported honestly); EVALUATION.md comparison omitted with a note. No code changed |
 
 ## Environment facts (fill during build)
 
