@@ -150,7 +150,17 @@ export default function Dashboard() {
                   <BarChart data={data.cost_by_role}>
                     <CartesianGrid stroke="#1b2333" vertical={false} />
                     <XAxis dataKey="role" tick={{ fill: "#64748b", fontSize: 10 }} angle={-20} textAnchor="end" height={50} interval={0} />
-                    <YAxis tick={{ fill: "#64748b", fontSize: 11 }} width={40} />
+                    <YAxis
+                      tick={{ fill: "#64748b", fontSize: 11 }}
+                      width={40}
+                      tickFormatter={(v: number) =>
+                        v >= 1_000_000
+                          ? `${Number((v / 1_000_000).toFixed(1))}M`
+                          : v >= 1000
+                            ? `${Math.round(v / 1000)}k`
+                            : `${v}`
+                      }
+                    />
                     <Tooltip {...TOOLTIP} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="tokens_in" stackId="t" fill="#5b9bff" name="in" radius={[0, 0, 0, 0]} />

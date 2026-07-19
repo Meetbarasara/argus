@@ -19,7 +19,7 @@
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
 | M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated; **clean headline run 2026-07-18** (7/15 PASS, cerebras:gpt-oss-120b supervisor, recovery 8/8) + memory ablation → EVALUATION.md regenerated (see 2026-07-18 log) |
-| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **EVALUATION.md clean numbers DONE 2026-07-18**; **UI verified vs the clean run**; `demo --auto` (S3 fails on free model), `docs/img/` screenshots (need a screenshot tool), `down -v` clean-boot (destructive) still deferred |
+| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **EVALUATION.md clean numbers 2026-07-18**; **UI verified vs the clean run**; **`docs/img/` screenshots DONE 2026-07-19** (+README gallery, dashboard format fixes, vitest 13); `demo --auto` unblocked (S4 repoint, needs one live verify); `down -v` clean-boot + fresh-eval headline still pending |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
 "Verify before" / "Gate after": ✅ + date, or ❌ + link to note.
@@ -79,6 +79,28 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   interpretation, S3 §Failures synthesis). The auto supervisor-model table was **removed** — its only
   gemini comparators are quota-degraded 0–6-call runs (unfair). `.env` restored to live/off/true
   (supervisor override dropped); `/api/health` echo confirms.
+
+### M12 — 2026-07-19 (docs/img screenshots DONE + dashboard format fixes + README gallery)
+- **Screenshots captured** into `docs/img/` (4): `incidents.png`, `trace-drilldown.png`,
+  `approvals.png`, `dashboard.png` — via **headless system Chrome driven by a scratchpad-local
+  puppeteer-core script** (no repo devDep added; the M12 "no screenshot tool" blocker is void).
+  UI/API images rebuilt first so the health footer shows the routed `gpt-oss-120b` (was stale
+  `gemini-2.5-flash` from the pre-`f263976` image).
+- **Shot integrity:** first drill-down attempt landed on a fake-mode test incident (`fake` badge,
+  11 ms spans) — re-shot against **live** clean-run incident `648985a7` (High error rate on shopapi,
+  RESOLVED via approved `rollback_deploy`, 21 LLM · 14 tool calls, supervisor span `gpt-oss-120b`,
+  543→422 tok, `live` badge). `memory.png` skipped — memories table is empty (integration-test runs
+  truncated it); capture on eval day when the ablation repopulates it.
+- **Two real UI bugs found in the shots, fixed:** (1) `seconds()` interpolated raw floats — dashboard
+  showed `avg 42.831460674157306s`, now rounds (`43s`, `4m 14s`); (2) tokens-by-role Y-axis clipped
+  `1200000` to `200000` at width 40 — now compact ticks (`300k … 1.2M`). +`format.test.ts`;
+  **ui lint + typecheck clean, vitest 13/13** (was 10); ui image rebuilt, dashboard re-shot.
+- **README:** screenshot gallery wired in (hero trace drill-down + 3-up feed/approval/dashboard);
+  provider story refreshed to Cerebras + Groq + Gemini (3 free keys, judge-only Gemini);
+  `.env.example` Cerebras comment updated to "primary" + recommended `LLM_FALLBACK` chain.
+- **Routing unified on main:** `f263976` (models.yaml re-route) is on main via cherry-pick `d5f2810`.
+- Remaining for M12 done: fresh-quota eval headline (+EVALUATION/README numbers), `demo --auto`
+  live verify (S4), memory.png, `down -v` clean-boot **last** (destructive), push.
 
 ### M12 — 2026-07-18 (UI verified against the clean run; demo/screenshots/down-v deferred)
 - **UI console verified live** against the fresh M11 data (`docker compose up -d ui`, `localhost:8081`

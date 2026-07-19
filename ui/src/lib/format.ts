@@ -24,9 +24,9 @@ export function duration(ms: number | null | undefined): string {
 
 export function seconds(s: number | null | undefined): string {
   if (s == null) return "—";
-  if (s < 60) return `${s}s`;
+  if (s < 60) return `${Number(s.toFixed(s > 0 && s < 10 ? 1 : 0))}s`;
   const m = Math.floor(s / 60);
-  return `${m}m ${s % 60}s`;
+  return `${m}m ${Math.round(s % 60)}s`;
 }
 
 export function money(usd: number | null | undefined): string {

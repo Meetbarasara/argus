@@ -27,9 +27,19 @@ realistic ways — so you can watch the whole investigate → approve → remedi
 end to end, on your laptop, in minutes.
 
 <div align="center">
-<em>▶️ Inject a bad deploy → Argus diagnoses it → you approve the rollback → recovery.</em><br/>
-<sub>Demo GIF + screenshots: drop them in <code>docs/img/</code> (capture guide in <a href="INTERVIEW_NOTES.md">INTERVIEW_NOTES.md</a>).</sub>
-<!-- <img src="docs/img/demo.gif" alt="Argus demo" width="720"/> -->
+
+<img src="docs/img/trace-drilldown.png" alt="Trace explorer — a resolved live incident: 21 LLM + 14 tool calls, with the supervisor span opened to its exact prompt, tokens, and cost" width="900"/>
+<br/><em>A real resolved incident, opened as a trace — every LLM span drills down to its exact prompt, tokens, and cost.</em>
+
+<table>
+<tr>
+<td align="center"><img src="docs/img/incidents.png" alt="Live incident feed" width="290"/><br/><sub><b>Live incident feed</b> — status, escalation, cost</sub></td>
+<td align="center"><img src="docs/img/approvals.png" alt="Approval card with proposed remediation, confidence, and evidence" width="290"/><br/><sub><b>Approval card</b> — approve / modify / reject</sub></td>
+<td align="center"><img src="docs/img/dashboard.png" alt="Cost and outcome dashboard" width="290"/><br/><sub><b>Dashboard</b> — outcomes, cost, tokens by role</sub></td>
+</tr>
+</table>
+
+<!-- <img src="docs/img/demo.gif" alt="Argus demo — inject a bad deploy → diagnose → approve the rollback → recovery" width="720"/> -->
 </div>
 
 ---
@@ -79,7 +89,7 @@ flowchart LR
   AW -- alert --> API
   WK -- reads logs / metrics / deploys --> WORLD
   WK -- remediation --> ACT
-  WK -- reasoning --> LLM[Gemini / Groq]
+  WK -- reasoning --> LLM[Cerebras / Groq / Gemini]
 ```
 
 **The incident loop:** an alert becomes an incident → the graph runs
@@ -100,7 +110,7 @@ Every choice here is deliberate and defensible:
 | **Background execution** | **Celery + Redis** | A graph run takes minutes and must survive process restarts, so it runs on a durable task queue — not a request thread. Redis also backs the LLM rate limiter. |
 | **Data + memory** | **PostgreSQL + pgvector** | *One* database for both relational data (incidents, spans, approvals) and vector memory. No separate vector service to run, secure, or pay for — and it's swappable behind a thin interface. |
 | **Embeddings** | **fastembed** (bge-small, ONNX) | Local embeddings baked into the image — no embedding API, no rate limits, fully offline. |
-| **Language models** | **Gemini + Groq** | A provider-agnostic router with record/replay caching and automatic fallback; swapping the model is one environment variable. Runs on free tiers. |
+| **Language models** | **Cerebras + Groq + Gemini** | A provider-agnostic router with record/replay caching and automatic fallback; swapping any role's model is one environment variable. High-volume roles run on Cerebras/Groq (generous free budgets); Gemini serves only the low-volume eval judge. Runs entirely on free tiers. |
 | **Observability** | **OpenTelemetry** | Instrument once, export twice — to Postgres (powers our UI/dashboards) and optionally to Jaeger. Industry-standard trace trees, right down to prompt/token/cost. |
 | **Frontend** | **React + TypeScript + Tailwind + Vite** | A typed, responsive operator console; TanStack Query polling keeps it simple (incidents last minutes, so no websockets needed). |
 | **Deployment** | **Docker Compose** | The entire system — platform *and* a live demo world — boots with a single command, reproducibly, on any machine with Docker. |
@@ -113,8 +123,8 @@ Every choice here is deliberate and defensible:
 ### Prerequisites
 
 - **Docker + Docker Compose** and **git**. That's it — every service runs in a container.
-- Two **free** LLM API keys (no credit card):
-  [Google AI Studio](https://aistudio.google.com) (Gemini) and [Groq](https://console.groq.com).
+- Three **free** LLM API keys (no credit card): [Cerebras](https://cloud.cerebras.ai),
+  [Groq](https://console.groq.com), and [Google AI Studio](https://aistudio.google.com) (Gemini).
 
 ### 1 · Clone and configure
 
