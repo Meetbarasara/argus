@@ -219,8 +219,18 @@ clean, decoy-deploys, and noisy) across **root-cause accuracy, remediation corre
 recovery rate, escalation precision & recall, MTTR, and cost** — plus two ablations
 (**memory on/off** and a **supervisor-model A/B**). Grading is mostly deterministic: recovery
 is re-derived from raw metrics, so the system never grades its own homework; only root-cause
-*phrasing* is judged, with an auditable rubric. Method and scores live in
-**[EVALUATION.md](EVALUATION.md)**.
+*phrasing* is judged, with an auditable rubric.
+
+**Latest run (free-tier models, all 15 cases real investigations — no artifacts):**
+
+| RCA accuracy | Outcome | Recovery | Escalation |
+|---|---|---|---|
+| **10/15 (67%)** | **8/15 PASS** · 2 partial | **8/8 (100%)** | precision 92% / recall 100% |
+
+It **fails closed** — 100% recovery on autonomous fixes and never once auto-resolves a case that
+needed a human. The instructive gap is RCA 67% vs PASS 53%: it diagnoses more than it acts on,
+preferring to escalate to a human when uncertain. Full method, per-case table, failure analysis,
+and reproduction command in **[EVALUATION.md](EVALUATION.md)**.
 
 ---
 

@@ -19,7 +19,7 @@
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
 | M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated; **clean headline run 2026-07-18** (7/15 PASS, cerebras:gpt-oss-120b supervisor, recovery 8/8) + memory ablation → EVALUATION.md regenerated (see 2026-07-18 log) |
-| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **EVALUATION.md clean numbers 2026-07-18**; **UI verified vs the clean run**; **`docs/img/` screenshots DONE 2026-07-19** (+README gallery, dashboard format fixes, vitest 13); `demo --auto` unblocked (S4 repoint, needs one live verify); `down -v` clean-boot + fresh-eval headline still pending |
+| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **fresh clean headline DONE 2026-07-19: 8/15 PASS, RCA 10/15, 0 artifacts, S3 2/3** (run `01349136`) → EVALUATION.md + README results table updated; **`docs/img/` screenshots DONE** (+gallery, dashboard format fixes, vitest 13); **UI verified**; still open: `demo --auto` live verify (S4 repoint), `down -v` clean-boot |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
 "Verify before" / "Gate after": ✅ + date, or ❌ + link to note.
@@ -36,6 +36,27 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   worldstate/alerts/sent.jsonl after 41s; shopapi log shows 37 ConnectError lines
 - `pytest -m world` → 12 passed
 -->
+
+### Fresh clean headline eval — 2026-07-19 (8/15, zero artifacts, S3 breakthrough)
+- **Run `01349136` (live, supervisor `cerebras:gpt-oss-120b`, change_analyst+reviewer `cerebras:zai-glm-4.7`,
+  memory off): 8/15 PASS · 2 PARTIAL · 5 FAIL · RCA 10/15 (67%) · recovery 8/8 · escalation P92/R100 ·
+  $0.32 · 236 calls.** Supersedes the 2026-07-18 7/15. **Every case is a real investigation — 0 zero-call
+  artifacts** (the M11 headline had 3), because the run executed on a freshly-restarted Docker engine.
+- **The win — S3 change-correlation: 0/3 → 2/3.** Baseline failed all three S3 variants (deploy broke
+  `payment_url` → read as a paymentsvc dependency outage). Moving `change_analyst` off non-reasoning
+  groq-llama onto `cerebras:zai-glm-4.7` (GLM-4.7) flips S3-v2/v3 to PASS. Drove RCA 47%→67%. Also S5 3/3.
+- **The honest finding — over-escalation caps PASS.** 7 cases escalate to TAKE_OVER; S2-v1/v3 diagnose
+  correctly (RCA ✅) but hand off instead of proposing the fix → PARTIAL. The RCA-10 vs PASS-8 gap is the
+  conservative reviewer/risk-gate, i.e. improving diagnosis surfaced an escalation-calibration bottleneck.
+- **How assembled (honest):** a double-launch (nohup Git-Bash + PowerShell Tee-Object) ran two evals
+  concurrently → collided on one world → slow + corrupt. Recovery: killed both, fixed a wedged Docker
+  health-exec (`wsl --shutdown` + relaunch), then `--resume`'d `01349136` keeping the **4 cases two
+  independent runs graded identically** (S1-v1/v2/v3, S2-v1) and re-running the other 11 on the clean
+  engine; the 2 stragglers (S3-v1, S4-v2) were re-run individually until non-artifact. See
+  [[argus-resume-readiness]]/[[argus-live-gate-ops]] for the ops playbook. `.env` restored to baseline.
+- EVALUATION.md regenerated (`report.py 01349136`) + hand-augmented (S3 story, over-escalation finding,
+  assembly note); auto gemini model-comparison table removed again (quota-degraded comparators). README
+  gained a results table. Host `poe verify` unaffected (config/doc-only changes).
 
 ### Post-M11 hardening — 2026-07-19 (#3: eval incident-selection fix + demo→S4)
 - **Root-caused the "0 llm_calls" artifact — it was a false FAIL, not a metrics slip.** A case can fire
