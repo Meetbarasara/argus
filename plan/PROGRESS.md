@@ -19,7 +19,7 @@
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
 | M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated; **clean headline run 2026-07-18** (7/15 PASS, cerebras:gpt-oss-120b supervisor, recovery 8/8) + memory ablation → EVALUATION.md regenerated (see 2026-07-18 log) |
-| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **fresh clean headline DONE 2026-07-19: 8/15 PASS, RCA 10/15, 0 artifacts, S3 2/3** (run `01349136`) → EVALUATION.md + README results table updated; **`docs/img/` screenshots DONE** (+gallery, dashboard format fixes, vitest 13); **UI verified**; still open: `demo --auto` live verify (S4 repoint), `down -v` clean-boot |
+| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **fresh clean headline DONE 2026-07-19: 8/15 PASS, RCA 10/15, 0 artifacts, S3 2/3** (run `01349136`) → EVALUATION.md + README results table updated; **`docs/img/` screenshots DONE** (+gallery, dashboard format fixes, vitest 13); **UI verified**; **`demo --auto` VERIFIED live 2026-07-20** (both acts RESOLVED; 2 real bugs fixed); still open: demo GIF for README, `down -v` clean-boot |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
 "Verify before" / "Gate after": ✅ + date, or ❌ + link to note.
@@ -100,6 +100,26 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   interpretation, S3 §Failures synthesis). The auto supervisor-model table was **removed** — its only
   gemini comparators are quota-degraded 0–6-call runs (unfair). `.env` restored to live/off/true
   (supervisor override dropped); `/api/health` echo confirms.
+
+### M12 — 2026-07-20 (`demo --auto` verified live; two real demo bugs fixed)
+- **`python -m argus.demo --auto` now runs clean end-to-end.** Act 1 `RESOLVED · MTTR 86s · 16 LLM
+  calls · memory_used=False` → postmortem memory written; Act 2 (same fault) `RESOLVED · MTTR 73s ·
+  15 calls · memory_used=True` → **6% fewer calls, 13s faster**. Modest but real and reproducible;
+  reported as measured, not inflated. This clears the last M12 runtime blocker (S3→S4 repoint held).
+- **Bug 1 — demo was 100% broken on Windows.** First `_say()` died with `UnicodeEncodeError`: stdout
+  defaults to cp1252 and the beats print box-drawing/emoji. `evals/run.py:main` already carried the
+  UTF-8 `reconfigure` guard; `demo.py:main` did not. Added the same guard.
+- **Bug 2 — the demo printed a false result.** `_one_incident` waited 240s for
+  `{WAITING_APPROVAL} ∪ TERMINAL`, but under `--auto` policy_sim approves *inside* the graph, so
+  WAITING_APPROVAL is never observed and that one window had to cover the whole arc. A memory-warm
+  act 2 took **278s** → the wait timed out mid-flight and the non-terminal snapshot
+  (`REMEDIATING · MTTR Nones · 0 LLM calls`) was printed as the final result — and 0 calls fed the
+  comparison renderer as a triumphant **"100% fewer LLM calls"**, i.e. a lie on screen. Fixed: 300s
+  first window + a second 420s window when still non-terminal, `mttr=None` renders `—` not `Nones`,
+  and `comparison_table` only claims a lift when BOTH runs completed (else "a run did not complete"),
+  says "more" when the repeat run costs more, and pads every row to one width so the box lines up.
+- **Gate:** `uv run poe verify` **177** green; both existing `test_demo` assertions still hold
+  (54% fewer / zero-call "—" path).
 
 ### M12 — 2026-07-19 (docs/img screenshots DONE + dashboard format fixes + README gallery)
 - **Screenshots captured** into `docs/img/` (4): `incidents.png`, `trace-drilldown.png`,

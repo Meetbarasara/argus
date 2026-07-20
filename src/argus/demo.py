@@ -16,6 +16,8 @@ so the beat sequencing + the comparison renderer unit-test without docker or LLM
 from __future__ import annotations
 
 import argparse
+import io
+import sys
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -44,18 +46,32 @@ def comparison_table(first: dict[str, Any], second: dict[str, Any]) -> str:
 
     c1, c2 = g(first, "llm_calls"), g(second, "llm_calls")
     m1, m2 = first.get("mttr_seconds"), second.get("mttr_seconds")
-    delta = f"{round(100 * (c1 - c2) / c1)}% fewer" if c1 else "—"
+    # Only claim a lift when BOTH runs actually completed. A timed-out second act reports 0
+    # calls, which the old formula rendered as a triumphant "100% fewer" — a lie on screen.
+    if c1 and c2:
+        pct = round(100 * (c1 - c2) / c1)
+        delta = f"{abs(pct)}% {'fewer' if pct >= 0 else 'more'} LLM calls on the repeat incident"
+    else:
+        delta = "— a run did not complete, so no comparison"
     mt = lambda v: f"{v}s" if isinstance(v, int | float) else "—"  # noqa: E731
+    w = 66  # inner box width — keep every row identical so the frame lines up on screen
+
+    def row(label: str, a: str, b: str) -> str:
+        return "│" + f"  {label:<14}{a:>16}{b:>18}".ljust(w) + "│"
+
     lines = [
         "",
-        "┌─ Memory lift — same fault, second time ──────────────────────────┐",
-        f"│  {'':14}{'run 1 (cold)':>16}{'run 2 (memory)':>18}          │",
-        f"│  {'LLM calls':14}{c1:>16}{c2:>18}          │",
-        f"│  {'MTTR':14}{mt(m1):>16}{mt(m2):>18}          │",
-        f"│  {'memory used':14}{str(first.get('memory_used', False)):>16}"
-        f"{str(second.get('memory_used', False)):>18}          │",
-        f"│  → {delta} LLM calls on the repeat incident{'':22}│",
-        "└──────────────────────────────────────────────────────────────────┘",
+        "┌" + "─ Memory lift — same fault, second time ".ljust(w, "─") + "┐",
+        row("", "run 1 (cold)", "run 2 (memory)"),
+        row("LLM calls", str(c1), str(c2)),
+        row("MTTR", mt(m1), mt(m2)),
+        row(
+            "memory used",
+            str(first.get("memory_used", False)),
+            str(second.get("memory_used", False)),
+        ),
+        "│" + f"  → {delta}".ljust(w) + "│",
+        "└" + "─" * w + "┘",
         "",
     ]
     return "\n".join(lines)
@@ -92,7 +108,7 @@ def _one_incident(
         return {}
     _say(f"🔍 Incident {incident_id[:8]} is INVESTIGATING — watch the live trace tree in the UI.")
 
-    inc = _await_status(platform, incident_id, {"WAITING_APPROVAL", *TERMINAL}, 240.0)
+    inc = _await_status(platform, incident_id, {"WAITING_APPROVAL", *TERMINAL}, 300.0)
     if inc.get("status") == "WAITING_APPROVAL":
         _say("⏸  Risk gate says APPROVE_ACTION → paused for a human. The approval card shows the")
         _say("   evidence, the proposed rollback, and the agent's confidence.", 0.4)
@@ -100,12 +116,20 @@ def _one_incident(
             _say("   (--auto) policy_sim approves as policy dictates…")
         else:
             approve(incident_id)
-        inc = _await_status(platform, incident_id, TERMINAL, 300.0)
+        inc = _await_status(platform, incident_id, TERMINAL, 420.0)
+    elif inc.get("status") not in TERMINAL:
+        # --auto approves inside the graph, so WAITING_APPROVAL is never observed and the one
+        # window above has to cover the whole arc (investigate → remediate → verify recovery).
+        # A memory-warm act 2 measured 278s, so give it a second window instead of printing a
+        # mid-flight status (REMEDIATING · 0 calls) as if it were the final result.
+        _say("   …still working (remediating / verifying recovery) — waiting for the finish…", 0.4)
+        inc = _await_status(platform, incident_id, TERMINAL, 420.0)
 
     status = inc.get("status", "?")
     icon = "✅" if status == "RESOLVED" else "🛑"
+    mttr = inc.get("mttr_seconds")
     _say(
-        f"{icon} → {status} · MTTR {inc.get('mttr_seconds', '—')}s · "
+        f"{icon} → {status} · MTTR {f'{mttr}s' if isinstance(mttr, int | float) else '—'} · "
         f"{inc.get('llm_calls', 0)} LLM calls · memory_used={inc.get('memory_used', False)}"
     )
     return inc
@@ -178,6 +202,11 @@ def _set_demo_env(*, auto: bool, llm_mode: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Windows stdout defaults to cp1252, which can't encode the box-drawing/emoji beats — the
+    # very first _say() died with UnicodeEncodeError. Force UTF-8 so the demo never dies on
+    # output (same guard the eval runner's main already carries).
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(prog="argus.demo")
     ap.add_argument("--auto", action="store_true", help="zero-interaction (policy_sim approvals)")
     ap.add_argument("--llm-mode", choices=["live", "record", "replay"], default="live")
