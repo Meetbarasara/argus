@@ -14,7 +14,7 @@ import type { ReactNode } from "react";
 import { EmptyState, ErrorNote, PageHeader, Spinner } from "../components/ui";
 import { StatusChip } from "../components/StatusChip";
 import { money, pct, seconds } from "../lib/format";
-import type { EvalRunSummary } from "../api";
+import type { DashboardSummary, EvalRunSummary } from "../api";
 import { useDashboard, useEvalRuns } from "../queries";
 
 const TOOLTIP = {
@@ -90,6 +90,22 @@ function EvalPanel({ runs }: { runs: EvalRunSummary[] }) {
   );
 }
 
+/** The API returns one row per (role, model) pair, but this chart is labelled *by role* — so
+ *  after a model re-route the same role rendered as several identically-labelled bars
+ *  ("supervisor" x3). Fold them back to one bar per role, biggest first. */
+function tokensByRole(rows: DashboardSummary["cost_by_role"]) {
+  const acc = new Map<string, { role: string; tokens_in: number; tokens_out: number }>();
+  for (const r of rows) {
+    const cur = acc.get(r.role) ?? { role: r.role, tokens_in: 0, tokens_out: 0 };
+    cur.tokens_in += r.tokens_in;
+    cur.tokens_out += r.tokens_out;
+    acc.set(r.role, cur);
+  }
+  return [...acc.values()].sort(
+    (a, b) => b.tokens_in + b.tokens_out - (a.tokens_in + a.tokens_out),
+  );
+}
+
 export default function Dashboard() {
   const { data, isLoading, error } = useDashboard();
   const evals = useEvalRuns();
@@ -147,7 +163,7 @@ export default function Dashboard() {
               <div className="card p-4">
                 <div className="mb-2 text-xs uppercase tracking-wide text-ink-500">Tokens by role</div>
                 <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={data.cost_by_role}>
+                  <BarChart data={tokensByRole(data.cost_by_role)}>
                     <CartesianGrid stroke="#1b2333" vertical={false} />
                     <XAxis dataKey="role" tick={{ fill: "#64748b", fontSize: 10 }} angle={-20} textAnchor="end" height={50} interval={0} />
                     <YAxis
