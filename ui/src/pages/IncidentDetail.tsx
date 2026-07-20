@@ -1,7 +1,8 @@
-import { ArrowLeft, Brain, Zap } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Brain, UserCheck, Zap } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { IncidentDetail as IncidentT, Span } from "../api";
+import { api, type IncidentDetail as IncidentT, type Span } from "../api";
 import { StatusChip } from "../components/StatusChip";
 import Trace from "../components/Trace";
 import { ConfidenceBar, EmptyState, ErrorNote, JsonBlock, KeyVal, Spinner } from "../components/ui";
@@ -40,12 +41,12 @@ export default function IncidentDetail() {
               <StatusChip status={inc.status} />
               {inc.memory_used && (
                 <span title="memory recalled">
-                  <Brain className="h-4 w-4 text-violet-400" />
+                  <Brain className="h-4 w-4 text-violet-600" />
                 </span>
               )}
               {inc.fast_path && (
                 <span title="fast-path">
-                  <Zap className="h-4 w-4 text-amber-400" />
+                  <Zap className="h-4 w-4 text-amber-500" />
                 </span>
               )}
             </div>
@@ -80,17 +81,90 @@ export default function IncidentDetail() {
       </div>
 
       <div className="p-6">
-        {spansQ.isLoading && !spansQ.data && <Spinner label="Loading trace…" />}
+        {inc && <TakeoverPanel inc={inc} />}
         {tab === "trace" &&
           (spans.length ? (
             <Trace spans={spans} />
+          ) : spansQ.isLoading && !spansQ.data ? (
+            <Spinner label="Loading trace…" />
           ) : (
-            !spansQ.isLoading && <EmptyState title="No spans yet" hint="The investigation is just starting — this fills in live." />
+            <EmptyState title="No spans yet" hint="The investigation is just starting — this fills in live." />
           ))}
         {tab === "hypothesis" && inc && <HypothesisTab inc={inc} spans={spans} />}
         {tab === "remediation" && inc && <RemediationTab inc={inc} spans={spans} />}
         {tab === "memory" && inc && <MemoryTab inc={inc} spans={spans} />}
       </div>
+    </div>
+  );
+}
+
+/** A TAKEN_OVER incident waits for the human's write-up: the graph resumes only when
+ *  root cause + action taken are recorded (03 §4 takeover_resolution). This panel is the
+ *  UI for that last step — without it the incident can only be closed via curl. */
+function TakeoverPanel({ inc }: { inc: IncidentT }) {
+  const qc = useQueryClient();
+  const [rootCause, setRootCause] = useState("");
+  const [actionTaken, setActionTaken] = useState("");
+  const resolve = useMutation({
+    mutationFn: () =>
+      api.takeoverResolution(inc.id, { root_cause: rootCause, action_taken: actionTaken }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["incident", inc.id] });
+      qc.invalidateQueries({ queryKey: ["spans", inc.id] });
+      qc.invalidateQueries({ queryKey: ["approvals"] });
+    },
+  });
+  // Parking always leaves status WAITING_APPROVAL (worker _park_for_human) — TAKEN_OVER only
+  // appears after the resume. The pending TAKE_OVER row is the one true signal, and it is
+  // exactly what the takeover_resolution endpoint requires.
+  const pending = (inc.approvals ?? []).some(
+    (a) => a.level === "TAKE_OVER" && a.status === "PENDING",
+  );
+  if (!pending) return null;
+
+  return (
+    <div className="mb-6 rounded-lg border border-violet-300 bg-violet-50 p-4">
+      <div className="flex items-center gap-2 text-sm font-medium text-violet-800">
+        <UserCheck className="h-4 w-4" /> Argus handed this incident to you
+      </div>
+      <p className="mt-1 text-sm text-violet-700/90">
+        Record what was wrong and what you did — it closes the incident and becomes a memory
+        for the next time.
+      </p>
+      <form
+        className="mt-3 space-y-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          resolve.mutate();
+        }}
+      >
+        <input
+          value={rootCause}
+          onChange={(e) => setRootCause(e.target.value)}
+          placeholder="Root cause (e.g. payment provider rejected all cards after config change)"
+          className="w-full rounded-md border border-ink-700 bg-ink-900 p-2 text-sm text-ink-200 focus:border-accent focus:outline-none"
+        />
+        <input
+          value={actionTaken}
+          onChange={(e) => setActionTaken(e.target.value)}
+          placeholder="Action taken (e.g. reverted provider config, verified checkout)"
+          className="w-full rounded-md border border-ink-700 bg-ink-900 p-2 text-sm text-ink-200 focus:border-accent focus:outline-none"
+        />
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={resolve.isPending || !rootCause.trim() || !actionTaken.trim()}
+            className="btn-primary"
+          >
+            Mark resolved
+          </button>
+          {resolve.isError && (
+            <span className="text-sm text-rose-600">
+              {resolve.error instanceof Error ? resolve.error.message : "Failed to resolve"}
+            </span>
+          )}
+        </div>
+      </form>
     </div>
   );
 }
@@ -128,7 +202,7 @@ function HypothesisTab({ inc, spans }: { inc: IncidentT; spans: Span[] }) {
               {s.attrs?.confidence != null ? (
                 <ConfidenceBar value={s.attrs.confidence} />
               ) : (
-                <span className="text-xs text-ink-600">{s.status}</span>
+                <span className="text-xs text-ink-500">{s.status}</span>
               )}
             </div>
           ))}
@@ -144,10 +218,10 @@ function HypothesisTab({ inc, spans }: { inc: IncidentT; spans: Span[] }) {
               <span
                 className={
                   s.attrs?.verdict === "approve"
-                    ? "text-emerald-300"
+                    ? "text-emerald-700"
                     : s.attrs?.verdict === "reject"
-                      ? "text-rose-300"
-                      : "text-amber-300"
+                      ? "text-rose-700"
+                      : "text-amber-700"
                 }
               >
                 {s.attrs?.verdict ?? "—"}
@@ -183,7 +257,7 @@ function RemediationTab({ inc, spans }: { inc: IncidentT; spans: Span[] }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card title="Executed action">
-        <div className="font-mono text-sm text-emerald-300">
+        <div className="font-mono text-sm text-emerald-700">
           {action?.tool}(<span className="text-ink-300">{action?.target_service ?? action?.params?.service ?? ""}</span>)
         </div>
         {action?.params && <JsonBlock data={action.params} />}
@@ -195,7 +269,7 @@ function RemediationTab({ inc, spans }: { inc: IncidentT; spans: Span[] }) {
         {verify ? (
           <div className="space-y-1 text-sm">
             <KeyVal k="recovered">
-              <span className={verify.attrs?.recovered ? "text-emerald-300" : "text-rose-300"}>
+              <span className={verify.attrs?.recovered ? "text-emerald-700" : "text-rose-700"}>
                 {String(verify.attrs?.recovered ?? "—")}
               </span>
             </KeyVal>
@@ -216,15 +290,15 @@ function MemoryTab({ inc, spans }: { inc: IncidentT; spans: Span[] }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card title="Recall">
         <div className="flex gap-2 text-sm">
-          <span className={inc.memory_used ? "text-violet-300" : "text-ink-500"}>
+          <span className={inc.memory_used ? "text-violet-700" : "text-ink-500"}>
             {inc.memory_used ? "memory recalled" : "no memory used"}
           </span>
-          {inc.fast_path && <span className="text-amber-300">· fast-path</span>}
+          {inc.fast_path && <span className="text-amber-700">· fast-path</span>}
         </div>
       </Card>
       <Card title="Written">
         {wrote ? (
-          <div className="text-sm text-emerald-300">
+          <div className="text-sm text-emerald-700">
             memory {String(wrote).slice(0, 8)} written from this incident
           </div>
         ) : (

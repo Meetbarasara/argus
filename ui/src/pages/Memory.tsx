@@ -41,7 +41,7 @@ export default function Memory() {
       />
       <div className="space-y-4 p-6">
         {flash && (
-          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-300">
+          <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-700">
             {flash}
           </div>
         )}
@@ -89,7 +89,7 @@ export default function Memory() {
               <div className="flex items-start justify-between gap-2">
                 <div className="font-medium text-ink-100">{m.title}</div>
                 <button
-                  className="text-ink-600 hover:text-rose-400"
+                  className="text-ink-500 hover:text-rose-600"
                   title="delete memory"
                   onClick={() => window.confirm("Delete this memory?") && del.mutate(m.id)}
                 >

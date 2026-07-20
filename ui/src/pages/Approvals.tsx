@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import ApprovalCard, { type Decision } from "../components/ApprovalCard";
@@ -15,6 +15,12 @@ export default function Approvals() {
   const all = useApprovals();
   const qc = useQueryClient();
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 5000);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   const decide = useMutation({
     mutationFn: ({ id, d }: { id: string; d: Decision }) => api.decideApproval(id, d),
@@ -40,7 +46,7 @@ export default function Approvals() {
         subtitle="Remediations Argus won't run without you"
         right={
           pendingList.length > 0 ? (
-            <span className="rounded-full bg-amber-500 px-2.5 py-0.5 text-sm font-semibold text-ink-950">
+            <span className="rounded-full bg-amber-400 px-2.5 py-0.5 text-sm font-semibold text-amber-950">
               {pendingList.length} pending
             </span>
           ) : undefined
@@ -51,8 +57,8 @@ export default function Approvals() {
           <div
             className={`rounded-md border p-3 text-sm ${
               flash.kind === "ok"
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                : "border-rose-300 bg-rose-50 text-rose-700"
             }`}
           >
             {flash.text}

@@ -20,7 +20,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     <div className="flex h-full">
       <aside className="flex w-56 shrink-0 flex-col border-r border-ink-800 bg-ink-900">
         <div className="flex items-center gap-2 px-5 py-4">
-          <span className="h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_12px] shadow-accent" />
+          <span className="h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_10px] shadow-accent/50" />
           <span className="text-lg font-semibold tracking-tight text-ink-100">Argus</span>
           <span className="mt-1 text-[10px] uppercase tracking-widest text-ink-500">on-call</span>
         </div>
@@ -42,7 +42,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <Icon className="h-4 w-4" />
               <span className="flex-1">{label}</span>
               {label === "Approvals" && pendingCount > 0 && (
-                <span className="rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-ink-950">
+                <span className="rounded-full bg-amber-400 px-1.5 text-[11px] font-semibold text-amber-950">
                   {pendingCount}
                 </span>
               )}
@@ -52,7 +52,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
         <div className="space-y-1.5 border-t border-ink-800 p-3 text-[11px] text-ink-500">
           <div className="flex items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 rounded-full ${h?.db ? "bg-emerald-400" : "bg-rose-500"}`} />
+            <span className={`h-1.5 w-1.5 rounded-full ${h?.db ? "bg-emerald-500" : "bg-rose-500"}`} />
             <span>{h ? (h.db ? "platform healthy" : "db unreachable") : "connecting…"}</span>
           </div>
           {h && (

@@ -30,7 +30,7 @@ export function EmptyState({
 export function ErrorNote({ error }: { error: unknown }) {
   const msg = error instanceof Error ? error.message : String(error);
   return (
-    <div className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">
+    <div className="rounded-md border border-rose-300 bg-rose-50 p-3 text-sm text-rose-700">
       Couldn’t reach the API: {msg}
     </div>
   );
@@ -38,7 +38,7 @@ export function ErrorNote({ error }: { error: unknown }) {
 
 export function ConfidenceBar({ value }: { value: number | null | undefined }) {
   const v = Math.max(0, Math.min(1, value ?? 0));
-  const hue = v >= 0.7 ? "bg-emerald-400" : v >= 0.4 ? "bg-amber-400" : "bg-rose-400";
+  const hue = v >= 0.7 ? "bg-emerald-500" : v >= 0.4 ? "bg-amber-500" : "bg-rose-500";
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-24 overflow-hidden rounded-full bg-ink-800">
@@ -51,7 +51,7 @@ export function ConfidenceBar({ value }: { value: number | null | undefined }) {
 
 export function JsonBlock({ data }: { data: unknown }) {
   return (
-    <pre className="overflow-x-auto rounded-md border border-ink-800 bg-ink-950 p-3 font-mono text-xs leading-relaxed text-ink-300">
+    <pre className="overflow-x-auto rounded-md border border-ink-800 bg-ink-850 p-3 font-mono text-xs leading-relaxed text-ink-200">
       {JSON.stringify(data, null, 2)}
     </pre>
   );

@@ -19,7 +19,7 @@
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
 | M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated; **clean headline run 2026-07-18** (7/15 PASS, cerebras:gpt-oss-120b supervisor, recovery 8/8) + memory ablation → EVALUATION.md regenerated (see 2026-07-18 log) |
-| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **fresh clean headline DONE 2026-07-19: 8/15 PASS, RCA 10/15, 0 artifacts, S3 2/3** (run `01349136`) → EVALUATION.md + README results table updated; **`docs/img/` screenshots DONE** (+gallery, dashboard format fixes, vitest 13); **UI verified**; **`demo --auto` VERIFIED live 2026-07-20** (both acts RESOLVED; 2 real bugs fixed); still open: demo GIF for README, `down -v` clean-boot |
+| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **fresh clean headline DONE 2026-07-19: 8/15 PASS, RCA 10/15, 0 artifacts, S3 2/3** (run `01349136`) → EVALUATION.md + README results table updated; **`docs/img/` screenshots DONE** (+gallery, dashboard format fixes, vitest 13); **UI verified**; **`demo --auto` VERIFIED live 2026-07-20** (both acts RESOLVED; 2 real bugs fixed); **UI light theme + 3 bug fixes + take-over form, both HITL flows verified from the browser, screenshots regenerated 2026-07-21**; still open: demo GIF for README, `down -v` clean-boot |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
 "Verify before" / "Gate after": ✅ + date, or ❌ + link to note.
@@ -100,6 +100,39 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   interpretation, S3 §Failures synthesis). The auto supervisor-model table was **removed** — its only
   gemini comparators are quota-degraded 0–6-call runs (unfair). `.env` restored to live/off/true
   (supervisor override dropped); `/api/health` echo confirms.
+
+### M12 — 2026-07-21 (UI light theme + contrast pass; 3 real bugs fixed; both HITL flows verified live from the browser)
+- **Light theme conversion (user request).** The `ink` palette in `tailwind.config.js` inverted to a
+  light "control-room" ramp — same scale positions keep their roles (950=page bg, 900=surface,
+  100=strongest text) so no component markup renamed. Status tones retuned for white (deep -700/-800
+  text on -50/-100 tints, AA contrast); accent `#5b9bff→#2563eb`; recharts tooltip/grid/tick/bar hexes
+  updated; `color-scheme: light` set; `class="dark"` removed from index.html.
+- **Bug 1 (latent since M10): `ink-100`/`ink-200` were used in 23 places but never defined** in the
+  tailwind config — every heading/emphasis class was silently a no-op. Defined the full ramp.
+- **Bug 2: the ui container had been permanently `unhealthy`** — nginx `listen 80` binds IPv4 only,
+  while the healthcheck's busybox `wget localhost` resolves `::1` first → refused. Added
+  `listen [::]:80` + healthcheck now probes `127.0.0.1`. `docker ps` shows healthy for the first time.
+- **Bug 3: resolved incidents kept the parked-era `status_reason` "awaiting human decision"** forever
+  (close() never overwrote it) — contradicting the green Resolved chip in the UI header. close() now
+  stamps `remediation verified; service recovered`. (Old rows keep the stale text; optional one-line
+  SQL backfill left to the user.)
+- **Flow gap closed: TAKE_OVER approvals.** The Approvals card showed Approve/Modify/Reject on
+  TAKE_OVER rows, but the worker resumes those as `kind=takeover` reading `root_cause/action_taken`
+  from `modified_action` — a plain approve silently dropped the human's write-up. The card now shows
+  a notice + link instead, and the incident page gained a **TakeoverPanel** form wired to the existing
+  (previously unreachable from the UI) `POST /incidents/{id}/takeover_resolution`. Panel keys off the
+  pending TAKE_OVER approval, not `status`, since parking always leaves WAITING_APPROVAL.
+- **Polish:** approvals flash auto-dismisses (5s); trace spinner scoped to the Trace tab; amber badges
+  use `text-amber-950` (was `text-ink-950`, broken by inversion); incident rows keyboard-navigable.
+- **Verified live end-to-end (3 fresh S4 incidents on the rebuilt stack):** (1) APPROVE_ACTION card
+  approved in the browser → rollback → RECOVERED → RESOLVED with the **new status_reason** ✓;
+  (2) a 30%-confidence run escalated TAKE_OVER → resolved via the new TakeoverPanel →
+  `TAKEN_OVER · "human take-over: …"` + postmortem memory ✓; (3) memory-informed run (4 recalls)
+  paused APPROVE_ACTION at 88% → approved → resolved in ~18s ✓. World healed (pool=10) after each.
+- **`docs/img/` regenerated (all 4)** in the light theme via the scratchpad puppeteer-core method;
+  hero caption updated (16 LLM · 8 tool calls, memory-informed). README caption edited to match.
+- **Gates:** ui vitest **14/14** (new TAKE_OVER card test), eslint clean, tsc+vite build clean;
+  `uv run poe verify` **177** green.
 
 ### M12 — 2026-07-20 (`demo --auto` verified live; two real demo bugs fixed)
 - **`python -m argus.demo --auto` now runs clean end-to-end.** Act 1 `RESOLVED · MTTR 86s · 16 LLM

@@ -28,7 +28,7 @@ end to end, on your laptop, in minutes.
 
 <div align="center">
 
-<img src="docs/img/trace-drilldown.png" alt="Trace explorer — a resolved live incident: 21 LLM + 14 tool calls, with the supervisor span opened to its exact prompt, tokens, and cost" width="900"/>
+<img src="docs/img/trace-drilldown.png" alt="Trace explorer — a resolved live incident: 16 LLM + 8 tool calls, memory-informed, with the supervisor span opened to its exact prompt, tokens, and cost" width="900"/>
 <br/><em>A real resolved incident, opened as a trace — every LLM span drills down to its exact prompt, tokens, and cost.</em>
 
 <table>

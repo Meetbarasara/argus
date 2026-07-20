@@ -22,6 +22,13 @@ def close(state: dict[str, Any], deps: Any) -> dict[str, Any]:
         incident = incident_repo.get_incident(session, incident_id)
         if incident is not None and incident.status == "RECOVERED":
             fields = counter_rollup(session, incident_id, state.get("budget", {}))
-            incident_repo.transition(session, incident, "RESOLVED", **fields)
+            # overwrite the parked-era reason ("awaiting human decision") — stale once resolved
+            incident_repo.transition(
+                session,
+                incident,
+                "RESOLVED",
+                status_reason="remediation verified; service recovered",
+                **fields,
+            )
             sp.set(status="RESOLVED")
     return {}

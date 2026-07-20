@@ -68,8 +68,10 @@ export default function Incidents() {
                     <tr
                       key={inc.id}
                       onClick={() => nav(`/incidents/${inc.id}`)}
-                      className={`group cursor-pointer border-b border-ink-800/60 transition-colors hover:bg-ink-800/40 ${
-                        attention ? "bg-amber-500/[0.04]" : ""
+                      tabIndex={0}
+                      onKeyDown={(e) => e.key === "Enter" && nav(`/incidents/${inc.id}`)}
+                      className={`group cursor-pointer border-b border-ink-800/60 transition-colors hover:bg-ink-850/70 focus-visible:bg-accent/5 focus-visible:outline-none ${
+                        attention ? "bg-amber-50/70" : ""
                       }`}
                     >
                       <td
@@ -85,12 +87,12 @@ export default function Incidents() {
                           <SeverityBadge severity={inc.severity} />
                           {inc.memory_used && (
                             <span title="memory recalled">
-                              <Brain className="h-3.5 w-3.5 text-violet-400" />
+                              <Brain className="h-3.5 w-3.5 text-violet-600" />
                             </span>
                           )}
                           {inc.fast_path && (
                             <span title="fast-path resolution">
-                              <Zap className="h-3.5 w-3.5 text-amber-400" />
+                              <Zap className="h-3.5 w-3.5 text-amber-500" />
                             </span>
                           )}
                         </div>

@@ -19,12 +19,13 @@ import { useDashboard, useEvalRuns } from "../queries";
 
 const TOOLTIP = {
   contentStyle: {
-    background: "#0f1420",
-    border: "1px solid #273248",
+    background: "#ffffff",
+    border: "1px solid #e3e8f0",
     borderRadius: 8,
     fontSize: 12,
+    boxShadow: "0 4px 12px rgba(15, 23, 42, 0.08)",
   },
-  labelStyle: { color: "#cbd5e1" },
+  labelStyle: { color: "#2e3c53" },
 };
 
 function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) {
@@ -147,13 +148,13 @@ export default function Dashboard() {
                 </div>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={data.cost_per_incident.map((c) => ({ ...c, usd: c.cost_usd }))}>
-                    <CartesianGrid stroke="#1b2333" vertical={false} />
+                    <CartesianGrid stroke="#e3e8f0" vertical={false} />
                     <XAxis dataKey="service" hide />
-                    <YAxis tick={{ fill: "#64748b", fontSize: 11 }} width={48} tickFormatter={(v) => `$${v}`} />
+                    <YAxis tick={{ fill: "#5b6b84", fontSize: 11 }} width={48} tickFormatter={(v) => `$${v}`} />
                     <Tooltip {...TOOLTIP} formatter={(v: any) => money(Number(v))} />
                     <Bar dataKey="usd" radius={[3, 3, 0, 0]}>
                       {data.cost_per_incident.map((c) => (
-                        <Cell key={c.incident_id} fill={c.status === "RESOLVED" ? "#34d399" : "#5b9bff"} />
+                        <Cell key={c.incident_id} fill={c.status === "RESOLVED" ? "#10b981" : "#3b82f6"} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -164,10 +165,10 @@ export default function Dashboard() {
                 <div className="mb-2 text-xs uppercase tracking-wide text-ink-500">Tokens by role</div>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={tokensByRole(data.cost_by_role)}>
-                    <CartesianGrid stroke="#1b2333" vertical={false} />
-                    <XAxis dataKey="role" tick={{ fill: "#64748b", fontSize: 10 }} angle={-20} textAnchor="end" height={50} interval={0} />
+                    <CartesianGrid stroke="#e3e8f0" vertical={false} />
+                    <XAxis dataKey="role" tick={{ fill: "#5b6b84", fontSize: 10 }} angle={-20} textAnchor="end" height={50} interval={0} />
                     <YAxis
-                      tick={{ fill: "#64748b", fontSize: 11 }}
+                      tick={{ fill: "#5b6b84", fontSize: 11 }}
                       width={40}
                       tickFormatter={(v: number) =>
                         v >= 1_000_000
@@ -179,7 +180,7 @@ export default function Dashboard() {
                     />
                     <Tooltip {...TOOLTIP} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="tokens_in" stackId="t" fill="#5b9bff" name="in" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="tokens_in" stackId="t" fill="#3b82f6" name="in" radius={[0, 0, 0, 0]} />
                     <Bar dataKey="tokens_out" stackId="t" fill="#8b5cf6" name="out" radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

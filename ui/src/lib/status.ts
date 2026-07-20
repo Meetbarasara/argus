@@ -1,5 +1,6 @@
 // Visual mapping for the incident state machine (03 §1) — kept pure so it is unit-testable
 // without React. Tones group the many statuses into a handful of meanings the eye can scan.
+// Light theme: deep-hue text (-700/-800) on a pale tint (-50/-100) keeps chips ≥ AA contrast.
 
 export type Tone = "active" | "waiting" | "success" | "danger" | "escalated" | "neutral";
 
@@ -16,12 +17,12 @@ const STATUS_TONE: Record<string, Tone> = {
 };
 
 export const TONE_CLASSES: Record<Tone, string> = {
-  active: "text-sky-300 bg-sky-500/10 border-sky-500/30",
-  waiting: "text-amber-300 bg-amber-500/10 border-amber-500/40",
-  success: "text-emerald-300 bg-emerald-500/10 border-emerald-500/30",
-  danger: "text-rose-300 bg-rose-500/10 border-rose-500/30",
-  escalated: "text-violet-300 bg-violet-500/10 border-violet-500/30",
-  neutral: "text-ink-400 bg-ink-800 border-ink-700",
+  active: "text-sky-700 bg-sky-100/70 border-sky-300",
+  waiting: "text-amber-800 bg-amber-100/80 border-amber-300",
+  success: "text-emerald-700 bg-emerald-100/70 border-emerald-300",
+  danger: "text-rose-700 bg-rose-100/70 border-rose-300",
+  escalated: "text-violet-700 bg-violet-100/70 border-violet-300",
+  neutral: "text-ink-400 bg-ink-850 border-ink-700",
 };
 
 export function statusTone(status: string): Tone {
@@ -33,8 +34,8 @@ export function statusClasses(status: string): string {
 }
 
 export function severityClasses(sev: string): string {
-  if (sev === "critical") return "text-rose-300 border-rose-500/40";
-  if (sev === "warning") return "text-amber-300 border-amber-500/40";
+  if (sev === "critical") return "text-rose-700 border-rose-300";
+  if (sev === "warning") return "text-amber-700 border-amber-400";
   return "text-ink-400 border-ink-700";
 }
 
@@ -55,8 +56,8 @@ export function levelClasses(level: string | null | undefined): string {
 export const SPAN_KIND_COLOR: Record<string, string> = {
   node: "text-ink-200",
   llm: "text-accent",
-  tool: "text-emerald-400",
-  policy: "text-amber-300",
-  human: "text-violet-300",
+  tool: "text-emerald-600",
+  policy: "text-amber-600",
+  human: "text-violet-600",
   world: "text-ink-400",
 };

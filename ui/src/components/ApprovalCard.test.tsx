@@ -58,4 +58,18 @@ describe("ApprovalCard", () => {
     const confirm = screen.getByRole("button", { name: "Confirm reject" });
     expect(confirm).toBeDisabled();
   });
+
+  it("hides approve/reject on TAKE_OVER and points to the incident resolution form", () => {
+    render(
+      <MemoryRouter>
+        <ApprovalCard approval={{ ...fixture, level: "TAKE_OVER" }} onDecide={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /record your resolution/i })).toHaveAttribute(
+      "href",
+      "/incidents/inc-1",
+    );
+  });
 });

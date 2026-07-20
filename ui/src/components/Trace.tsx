@@ -69,13 +69,13 @@ export default function Trace({ spans }: { spans: Span[] }) {
               <Icon className={`h-3.5 w-3.5 shrink-0 ${SPAN_KIND_COLOR[span.kind] ?? "text-ink-400"}`} />
               <span className="truncate text-ink-200">{span.name}</span>
               {hasChildren && !isOpen && (
-                <span className="text-[10px] text-ink-600">+{countDescendants(node)}</span>
+                <span className="text-[10px] text-ink-500">+{countDescendants(node)}</span>
               )}
               <span className="ml-auto flex items-center gap-2 pl-2 text-xs text-ink-500">
                 <span className="tabular-nums">{duration(span.duration_ms)}</span>
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    span.status === "ERROR" ? "bg-rose-500" : "bg-emerald-500/60"
+                    span.status === "ERROR" ? "bg-rose-500" : "bg-emerald-500"
                   }`}
                 />
               </span>
@@ -108,7 +108,7 @@ function SpanDetail({ span }: { span: Span }) {
         <div className="font-mono text-sm text-ink-100">{span.name}</div>
         <div className="mt-1 flex gap-3 text-xs text-ink-500">
           <span>{span.kind}</span>
-          <span className={span.status === "ERROR" ? "text-rose-400" : "text-emerald-400"}>
+          <span className={span.status === "ERROR" ? "text-rose-600" : "text-emerald-600"}>
             {span.status}
           </span>
           <span>{duration(span.duration_ms)}</span>
@@ -134,7 +134,7 @@ function LlmDetail({ spanId }: { spanId: string }) {
   });
   if (isLoading) return <div className="text-xs text-ink-500">loading prompt…</div>;
   if (error || !data)
-    return <div className="text-xs text-ink-600">No LLM call recorded for this span.</div>;
+    return <div className="text-xs text-ink-500">No LLM call recorded for this span.</div>;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
@@ -149,10 +149,10 @@ function LlmDetail({ spanId }: { spanId: string }) {
       </div>
       <div>
         <div className="mb-1 text-xs uppercase tracking-wide text-ink-500">Prompt</div>
-        <div className="max-h-64 space-y-1.5 overflow-auto rounded-md border border-ink-800 bg-ink-950 p-2">
+        <div className="max-h-64 space-y-1.5 overflow-auto rounded-md border border-ink-800 bg-ink-850 p-2">
           {data.messages.map((m, i) => (
             <div key={i} className="text-xs">
-              <span className="text-ink-600">{m.role}: </span>
+              <span className="font-medium text-ink-500">{m.role}: </span>
               <span className="whitespace-pre-wrap text-ink-300">{m.content}</span>
             </div>
           ))}
@@ -174,7 +174,7 @@ function ToolDetail({ spanId }: { spanId: string }) {
   });
   if (isLoading) return <div className="text-xs text-ink-500">loading tool I/O…</div>;
   if (error || !data)
-    return <div className="text-xs text-ink-600">No tool call recorded for this span.</div>;
+    return <div className="text-xs text-ink-500">No tool call recorded for this span.</div>;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">

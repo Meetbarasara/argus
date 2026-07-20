@@ -66,9 +66,9 @@ export default function ApprovalCard({
         </div>
       </div>
 
-      <div className="rounded-md border border-ink-800 bg-ink-950/50 p-3">
+      <div className="rounded-md border border-ink-800 bg-ink-850/60 p-3">
         <div className="mb-1.5 text-xs uppercase tracking-wide text-ink-500">Proposed remediation</div>
-        <div className="font-mono text-sm text-emerald-300">
+        <div className="font-mono text-sm text-emerald-700">
           {action?.tool}(<span className="text-ink-300">{action?.target_service}</span>)
         </div>
         {action?.rationale && <div className="mt-1 text-sm text-ink-400">{action.rationale}</div>}
@@ -96,16 +96,27 @@ export default function ApprovalCard({
         </details>
       )}
       {memoryRefs.length > 0 && (
-        <div className="flex items-center gap-1.5 text-xs text-violet-300">
+        <div className="flex items-center gap-1.5 text-xs text-violet-700">
           <RefreshCw className="h-3 w-3" /> {memoryRefs.length} similar past incident(s) informed this
         </div>
       )}
 
-      {mode === "view" && (
+      {/* TAKE_OVER rows resume as kind=takeover — the worker reads root_cause/action_taken,
+          not an approve/reject verdict, so those buttons would silently drop the human's
+          write-up. Point to the incident page, where the resolution form lives. */}
+      {mode === "view" && approval.level === "TAKE_OVER" && (
+        <div className="rounded-md border border-violet-300 bg-violet-50 p-3 text-sm text-violet-800">
+          Argus handed this incident to you — approve/reject doesn’t apply here.{" "}
+          <Link to={`/incidents/${approval.incident_id}`} className="font-medium underline">
+            Record your resolution on the incident page →
+          </Link>
+        </div>
+      )}
+      {mode === "view" && approval.level !== "TAKE_OVER" && (
         <div className="flex flex-wrap gap-2 pt-1">
           <button
             disabled={busy}
-            className="btn bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"
+            className="btn bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
             onClick={() => onDecide({ decision: "approve" })}
           >
             <Check className="h-4 w-4" /> Approve
@@ -133,9 +144,9 @@ export default function ApprovalCard({
             }}
             rows={5}
             spellCheck={false}
-            className="w-full rounded-md border border-ink-700 bg-ink-950 p-2 font-mono text-xs text-ink-200 focus:border-accent focus:outline-none"
+            className="w-full rounded-md border border-ink-700 bg-ink-900 p-2 font-mono text-xs text-ink-200 focus:border-accent focus:outline-none"
           />
-          {jsonErr && <div className="text-xs text-rose-400">{jsonErr}</div>}
+          {jsonErr && <div className="text-xs text-rose-600">{jsonErr}</div>}
           <div className="flex gap-2">
             <button disabled={busy} className="btn-primary" onClick={submitModify}>
               Submit modified
@@ -154,7 +165,7 @@ export default function ApprovalCard({
             onChange={(e) => setComment(e.target.value)}
             rows={2}
             placeholder="Why reject? (required — becomes reviewer feedback on the replan)"
-            className="w-full rounded-md border border-ink-700 bg-ink-950 p-2 text-sm text-ink-200 focus:border-accent focus:outline-none"
+            className="w-full rounded-md border border-ink-700 bg-ink-900 p-2 text-sm text-ink-200 focus:border-accent focus:outline-none"
           />
           <div className="flex gap-2">
             <button
