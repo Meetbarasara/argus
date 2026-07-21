@@ -39,7 +39,8 @@ end to end, on your laptop, in minutes.
 </tr>
 </table>
 
-<!-- <img src="docs/img/demo.gif" alt="Argus demo — inject a bad deploy → diagnose → approve the rollback → recovery" width="720"/> -->
+<img src="docs/img/demo.gif" alt="Argus demo — inject a bad deploy → diagnose → approve the rollback → recovery" width="720"/>
+<br/><em>One real incident, end to end: inject a bad deploy → watch the live investigation → approve the rollback → recovered, and a memory written.</em>
 </div>
 
 ---
