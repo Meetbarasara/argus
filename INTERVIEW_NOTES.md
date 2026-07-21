@@ -82,6 +82,58 @@ deterministic tests + demos (ADR-05), and a transparent provider fallback
 (`LLM_FALLBACK=groq:…`) so a rate-limited call retries on another model. "The constraint
 became the feature."
 
+## Reliability Q&A — the multi-agent questions you WILL get
+
+**"How do you make sure an agent's response is correct?"**
+Four checks, in order, and only the last one is an LLM-free ground truth:
+1. **Schema validation on every call** — responses must parse into Pydantic models; a
+   malformed reply is retried with the validation error fed back (`validation_retries` is
+   recorded per call and visible in the trace UI). → [`agents/schemas.py`](src/argus/agents/schemas.py)
+2. **Evidence grounding** — a hypothesis carries excerpts from real tool output (logs,
+   metrics, deploy diffs); the approval card shows them so a human can audit the claim.
+3. **Independent review** — a *different* model (role-routed) must accept the hypothesis;
+   `revise` loops back, twice max, then it escalates instead of pushing through.
+4. **Reality check** — after remediation, `verify_recovery` re-reads the world's metrics;
+   "fixed" means the error rate actually fell, not that a model said so.
+And offline: the 15-case eval suite grades RCA against labeled scenarios (deterministic
+keyword/label match + LLM judge) — correctness is a measured number (RCA 10/15), not a claim.
+
+**"How do you make sure agents don't drift / hallucinate actions?"**
+- **The LLM never authorizes itself.** Escalation level comes from `policy.yaml` via plain
+  code; an unknown tool or unknown target service hard-routes to TAKE_OVER.
+  → [`policy/risk_gate.py`](src/argus/policy/risk_gate.py)
+- **Hallucinated calls can't execute.** Tools live in a fixed registry with JSON-schema arg
+  validation; a made-up tool or bad params fail before any side effect. Even a *human's*
+  modified action is re-validated server-side and may only lower risk (422 otherwise).
+- **Budgets** cap LLM calls and wall time per incident — breach = escalate, never loop.
+- **Low confidence escalates.** A live 30 %-confidence diagnosis routed to TAKE_OVER —
+  the safe failure direction (documented as over-escalation in EVALUATION.md).
+- **Drift across versions** is caught by re-running the eval suite after any prompt/model
+  change (record/replay makes reruns deterministic and free) and comparing pass rates —
+  the `/api/evals/runs` panel keeps the history side by side.
+- **Memory can't quietly steer** — fast-path needs ≥0.92 similarity; consolidation merges
+  duplicates and decays stale entries, so old incidents don't hijack new ones.
+
+**"Why multiple agents instead of one big prompt?"**
+Separation of concerns you can point at: the supervisor only plans (1–5 typed steps),
+specialists only gather evidence on a tool loop (parallel, cheaper models), the reviewer
+only critiques, and none of them holds remediation authority. It's a typed LangGraph state
+machine — every hop is a checkpointed state transition, not chat history.
+
+**"What if an agent dies mid-incident?"**
+Postgres checkpointer: the graph resumes from the exact parked node after a worker restart
+(proven by `test_hitl`). The approval decision flip is a single atomic
+`UPDATE … WHERE status='PENDING'` — a double-approve is a 409, and a duplicate resume no-ops.
+
+**"How do you control cost?"**
+Per-call token/cost accounting rolled up per incident and per role (dashboard chart), model
+routing per role (big model only where it pays), memory fast-path (measured 54 % call
+reduction on repeats), budgets as the hard stop. Whole 15-case eval: ~$0.32.
+
+**Honest gaps (say them before they ask):** the judge is itself an LLM (paired with
+deterministic label checks); eval reruns are manual, not a CI canary; the demo world's logs
+are trusted input — real infra would need prompt-injection hardening on ingested text.
+
 ## Scaling answers (what changes for real infra)
 
 - **Telemetry:** the tools read an interface, not files — swap the JSONL readers in
