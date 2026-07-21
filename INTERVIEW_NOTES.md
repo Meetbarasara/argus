@@ -147,6 +147,25 @@ are trusted input — real infra would need prompt-injection hardening on ingest
 - **Throughput:** Celery already scales horizontally (prefork workers); the checkpointer is
   Postgres, so a restart or a second worker resumes any parked incident.
 
+## Resume bullets (measured, defensible)
+
+Pick 3–4; every number traces to EVALUATION.md / PROGRESS.md:
+
+- Built **Argus**, an AI on-call engineer: a LangGraph multi-agent system (supervisor,
+  3 parallel specialists, independent reviewer) that investigates live alerts on a
+  13-container demo microservice stack, remediates via a token-authed actuator, and
+  escalates to a human through durable graph interrupts (FastAPI + Celery + Postgres/pgvector + React).
+- Enforced safety with a **deterministic risk gate** (policy-as-code over action × target ×
+  confidence) and full human-in-the-loop approve/modify/reject/take-over — **100 % escalation
+  recall** on the eval suite (zero unauthorized autonomous actions).
+- Shipped a **15-scenario evaluation harness** with LLM-judge + deterministic grading and
+  memory ablations: **67 % root-cause accuracy, 8/15 end-to-end PASS, ~$0.02/incident**,
+  run headlines regenerated from the DB (no hand-typed numbers).
+- Implemented **pgvector incident memory** with recall-informed planning and a similarity-gated
+  fast path — **54 % fewer LLM calls** on repeat incidents, proven by on/off ablation.
+- Full observability: every LLM/tool call traced with prompt, tokens, cost, and latency;
+  span-tree drill-down UI; record/replay LLM modes for deterministic tests on free-tier models.
+
 ## Recording checklist (<5-min video)
 
 **Pre-flight:** `LLM_MODE=record` dry run to fill the cache, then record against
