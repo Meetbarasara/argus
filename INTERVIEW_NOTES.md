@@ -162,7 +162,11 @@ Pick 3–4; every number traces to EVALUATION.md / PROGRESS.md:
   memory ablations: **67 % root-cause accuracy, 8/15 end-to-end PASS, ~$0.02/incident**,
   run headlines regenerated from the DB (no hand-typed numbers).
 - Implemented **pgvector incident memory** with recall-informed planning and a similarity-gated
-  fast path — **54 % fewer LLM calls** on repeat incidents, proven by on/off ablation.
+  fast path — **54 % fewer LLM calls** on an identical repeat incident (13 → 6, M07 controlled
+  measurement). Say "same-fault repeat", not "ablation": the harness's memory ON/OFF ablation
+  probes a *decoy-shifted* variant that falls under the 0.92 fast-path threshold and showed no
+  lift (15 vs 12) — that negative result is printed in EVALUATION.md, so claiming "the ablation
+  proved 20 %+" contradicts your own repo.
 - Full observability: every LLM/tool call traced with prompt, tokens, cost, and latency;
   span-tree drill-down UI; record/replay LLM modes for deterministic tests on free-tier models.
 
