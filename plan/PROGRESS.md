@@ -19,7 +19,7 @@
 | M09 | Observability | done | ✅ 2026-07-06 (clean; verify 133 + graph 19) | ✅ 2026-07-07 verify (141) + graph 19 + test_dashboard 2/2 + live dashboard sane + Jaeger 34-span single-root trace | 4c0797f | OTel dual sink; `incident` root span; pure-SQL /dashboard/summary; Jaeger profile |
 | M10 | React UI | done | ✅ 2026-07-07 (clean; verify 141 + graph 19) | ✅ 2026-07-07 ui lint+typecheck+build clean + vitest 10/10 + docker ui 200 + nginx→api proxy + live drill-down (llm+tool) | ffd4d96 | 5-page console: live incidents, trace explorer w/ prompt+tool drill-down, approval card (modify round-trip), memory, dashboard |
 | M11 | Evaluation harness | done | ✅ 2026-07-10 (clean; verify 158 @ 49c9cae) | ✅ 2026-07-10 (see log) — verify 166 + graph 23 + integration 20/21 (test_platform flake→4/4 standalone) + world 8/8 + replay smoke + baseline 15/15 graded + ablation lift table + /api/evals/runs 23 + UI panel live | 6cce150 | Harness complete + validated; **clean headline run 2026-07-18** (7/15 PASS, cerebras:gpt-oss-120b supervisor, recovery 8/8) + memory ablation → EVALUATION.md regenerated (see 2026-07-18 log) |
-| M12 | Demo & docs | in_progress | ✅ 2026-07-10 (clean; verify 169) | – | – | Writing done; **fresh clean headline DONE 2026-07-19: 8/15 PASS, RCA 10/15, 0 artifacts, S3 2/3** (run `01349136`) → EVALUATION.md + README results table updated; **`docs/img/` screenshots DONE** (+gallery, dashboard format fixes, vitest 13); **UI verified**; **`demo --auto` VERIFIED live 2026-07-20** (both acts RESOLVED; 2 real bugs fixed); **UI light theme + 3 bug fixes + take-over form, both HITL flows verified from the browser, screenshots regenerated 2026-07-21**; still open: demo GIF for README, `down -v` clean-boot |
+| M12 | Demo & docs | done | ✅ 2026-07-10 (clean; verify 169) | ✅ 2026-07-21 down -v clean boot (13/13 healthy, 0 incidents/memories, migrations ran) + demo --auto exit 0 w/ comparison table + verify-all: verify 177 + graph 24 + integration 28/29 (known test_platform flake → 4/4 standalone, same as M11) + git clean | 2d8bd61+ | COMPLETE. Headline 8/15 PASS / RCA 10/15 (run `01349136`); light-theme UI + demo.gif in README; both HITL flows verified live from the browser; details in 2026-07-21 log entries |
 
 Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open question).
 "Verify before" / "Gate after": ✅ + date, or ❌ + link to note.
@@ -100,6 +100,30 @@ Status values: `todo` → `in_progress` → `done` (or `blocked` with an Open qu
   interpretation, S3 §Failures synthesis). The auto supervisor-model table was **removed** — its only
   gemini comparators are quota-degraded 0–6-call runs (unfair). `.env` restored to live/off/true
   (supervisor override dropped); `/api/health` echo confirms.
+
+### M12 — 2026-07-21 (GATE COMPLETE: down -v clean boot + demo --auto + verify-all; demo.gif recorded — M12 DONE)
+- **Clean-boot proof.** `docker compose --profile platform --profile world down -v` (all 3 volumes
+  removed) → `up -d --build` → **13/13 healthy** (incl. ui, on the fixed healthcheck), migrations
+  applied, world seeded, `/api/health` ok, **0 incidents / 0 memories**. Doc note: the gate's
+  literal `docker compose down -v` silently skips every service on compose ≥2.24 because ALL
+  services sit behind the `platform`/`world` profiles — the profile flags are required on `down`
+  too (first attempt left postgres up with old data; caught by asserting an empty DB).
+- **Demo GIF recorded on the clean stack** (`docs/img/demo.gif`, 13 frames, 0.35 MB, README embed
+  uncommented): inject `d-0001` → live trace grows → approval card (85 % confidence,
+  `rollback_deploy`) → Approve clicked in-browser → RESOLVED → memory page. Zero prior memories
+  and it still diagnosed at 85 % (clean world, no decoys).
+- **`demo --auto`: exit 0 + comparison table** (the gate's requirement). Honest content: act 1
+  cold `RESOLVED · 96s · 15 calls`; act 2 recalled memory (`memory_used=True`, **20 % fewer
+  calls**) but ended `TAKEN_OVER` — the documented over-escalation failure mode
+  (EVALUATION.md §Failures), reported as measured, not re-rolled. Post-demo, `.env` was left at
+  `AUTO_APPROVE=policy_sim` (known runner behavior) — restored to `off` + api/worker recreated;
+  `/api/health` echo confirms live/off/true.
+- **`verify-all`:** verify **177** + graph **24** + integration **28/29**; the single failure is
+  the known `test_platform::test_webhook_creates_incident_and_worker_starts_graph` timing flake —
+  **4/4 green standalone** (identical signature and resolution to the M11 gate). World tests in
+  the batch all passed.
+- **M12 → done.** Remaining alumni items are user-side only: narrated video (checklist below),
+  cloud deploy (explicitly out of scope).
 
 ### M12 — 2026-07-21 (UI light theme + contrast pass; 3 real bugs fixed; both HITL flows verified live from the browser)
 - **Light theme conversion (user request).** The `ink` palette in `tailwind.config.js` inverted to a
